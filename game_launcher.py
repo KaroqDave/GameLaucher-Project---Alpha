@@ -17,8 +17,9 @@ class GameLauncherApp(ctk.CTk):
         ctk.set_default_color_theme("dark-blue")
 
         self.title("Game Launcher + System Monitor (Alpha v0.0.3)")
-        self.geometry("950x520")
-        self.minsize(850, 450)
+        self.geometry("950x600")      # Startgröße
+        self.minsize(950, 600)        # Mindestgröße
+
 
         # Grid: Zeile 0 = Header, Zeile 1 = Inhalt
         self.grid_rowconfigure(0, weight=0)   # Header
@@ -96,6 +97,63 @@ class GameLauncherApp(ctk.CTk):
     # --------------------------
     # Linkes Panel – Game Liste
     # --------------------------
+    def add_steam_library_dialog(self):
+        folder = filedialog.askdirectory(
+            title="Steam Library Ordner auswählen (z.B. steamapps/common)"
+        )
+        if not folder:
+            return
+
+        self.import_steam_games(folder)
+
+    def import_steam_games(self, common_path: str):
+        common_path = os.path.normpath(common_path)
+
+        if not os.path.isdir(common_path):
+            messagebox.showerror("Fehler", "Der ausgewählte Pfad ist kein Verzeichnis.")
+            return
+        
+        added = 0
+
+        # Jeder Unterordner in steamapps/common ist typischerweise ein Spiel
+        for game_dir_name in os.listdir(common_path):
+            game_dir = os.path.join(common_path, game_dir_name)
+            if not os.path.isdir(game_dir):
+                continue
+
+            exe_path = None
+
+            # Suche nach .exe-Dateien im Spielordner
+            for root, _, files in os.walk(game_dir):
+                for file in files:
+                    if file.lower().endswith(".exe"):
+                        exe_path = os.path.join(root, file)
+                        break
+                if exe_path:
+                    break
+            
+            # Wenn keine .exe gefunden wurde, überspringe
+            if not exe_path:
+                continue
+
+            # Duplikate vermeiden
+            if any(g["path"] == exe_path for g in self.games):
+                continue
+
+            # Spiel hinzufügen
+            game_name = os.path.splitext(os.path.basename(exe_path))[0]
+            self.games.append({"name": game_name, "path": exe_path})
+            added += 1
+        
+        self.save_games()
+        self.render_game_buttons()
+
+        # Info anzeigen
+        messagebox.showinfo(
+            "Import abgeschlossen",
+            f"{added} Spiele aus der Steam Library wurden hinzugefügt."
+        )
+
     def create_left_panel(self):
         self.left_frame = ctk.CTkFrame(self, corner_radius=0)
         self.left_frame.grid(row=1, column=0, sticky="nsw")
@@ -116,6 +174,14 @@ class GameLauncherApp(ctk.CTk):
             command=self.add_game_dialog
         )
         add_game_btn.pack(padx=10, pady=(0, 10), fill="x")
+
+        self.steam_import_btn = ctk.CTkButton(
+            self.left_frame,
+            text="Steam-Auto-Import",
+            command=self.add_steam_library_dialog
+        )
+        self.steam_import_btn.pack(padx=10, pady=(0, 10), fill="x")
+
 
     def render_game_buttons(self):
         for child in self.games_scroll.winfo_children():
