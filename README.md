@@ -1,4 +1,4 @@
-# 🎮 GameLauncher Project – Alpha v0.0.3  
+# 🎮 GameLauncher Project – Alpha v0.0.5  
 Ein moderner, anpassbarer **Game Launcher** mit integriertem **System Monitoring**, gebaut in Python mit *customtkinter*.  
 Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
