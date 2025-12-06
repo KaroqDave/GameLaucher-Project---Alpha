@@ -1,4 +1,4 @@
-# 🎮 GameLauncher Project – Alpha v0.0.2  
+# 🎮 GameLauncher Project – Alpha v0.0.3  
 Ein moderner, anpassbarer **Game Launcher** mit integriertem **System Monitoring**, gebaut in Python mit *customtkinter*.  
 Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
@@ -15,18 +15,14 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
   - Entfernen
 - Automatische Speicherung in `games.json`
 
-### 🖥 System Monitor
-- Live CPU-Auslastung (%)
-- Live RAM-Auslastung (%)
-- Anzeige:
-  - Gesamt-RAM (GB)
-  - physische CPU-Kerne
-  - logische CPU-Kerne
-- Aktualisiert automatisch jede Sekunde
+### 🖥 System Infos
+- Speicher (Freier und Belegter)
+- Aktuell Installierte Games
+- Aktuell Installierte Launcher
 
 ### 🎨 Modernes UI
 - Dark / Light / System Theme Auswahl
-- Übersichtlich strukturiert (Header + Sidebar + Monitor Panel)
+- Übersichtlich strukturiert (Header + Sidebar + System Panel)
 - Basierend auf **customtkinter** (Dark Mode ready)
 
 ### 📦 Saubere Architektur
@@ -38,10 +34,11 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
 🛠 Roadmap (Beta Ziele)
 
-GPU Monitoring (Auslastung, VRAM)
 Tabs: Games / System / Settings
 Game Icons (Steam, Epic, Battle.net)
 Kategorien & Tags
 Favoriten / Sterne
 Custom Themes
+
+### In Arbeit
 Auto-Detect von installierten Games
