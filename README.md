@@ -11,7 +11,6 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 - Spiele starten mit einem Klick
 - Rechtsklick-Menü:
   - Starten
-  - Umbenennen
   - Entfernen
 - Automatische Speicherung in `games.json`
 
@@ -34,7 +33,6 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
 🛠 Roadmap (Beta Ziele)
 
-Tabs: Games / System / Settings
 Game Icons (Steam, Epic, Battle.net)
 Kategorien & Tags
 Favoriten / Sterne
@@ -42,3 +40,6 @@ Custom Themes
 
 ### In Arbeit
 Auto-Detect von installierten Games
+
+### Fertig
+Tabs: Games / System / Settings
