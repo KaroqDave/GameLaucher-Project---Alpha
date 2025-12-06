@@ -84,14 +84,13 @@ class GameLauncherApp(ctk.CTk):
     # Games-Tab
     # --------------------------
     def create_games_tab_content(self):
-        # Games-Tab bekommt wieder ein 2-Spalten-Layout (links Liste, rechts Platzhalter)
+        # Games-Tab: eine Zeile, eine Spalte → komplette Breite für die Liste
         self.games_tab.grid_rowconfigure(0, weight=1)
-        self.games_tab.grid_columnconfigure(0, weight=0)  # links schmal
-        self.games_tab.grid_columnconfigure(1, weight=1)  # rechts flexibel
+        self.games_tab.grid_columnconfigure(0, weight=1)
 
-        # ----- Linke Seite (Liste + Buttons) -----
+        # Rahmen für die gesamte Liste
         self.left_frame = ctk.CTkFrame(self.games_tab, corner_radius=0)
-        self.left_frame.grid(row=0, column=0, sticky="nsw")
+        self.left_frame.grid(row=0, column=0, sticky="nsew")
 
         title_label = ctk.CTkLabel(
             self.left_frame,
@@ -100,8 +99,8 @@ class GameLauncherApp(ctk.CTk):
         )
         title_label.pack(padx=10, pady=(10, 5), anchor="w")
 
-        self.games_scroll = ctk.CTkScrollableFrame(
-            self.left_frame, width=260, height=380)
+        # Scrollbare Liste – keine feste width mehr, damit sie die Breite nutzen kann
+        self.games_scroll = ctk.CTkScrollableFrame(self.left_frame, height=380)
         self.games_scroll.pack(padx=10, pady=(0, 10), fill="both", expand=True)
 
         self.render_game_buttons()
@@ -112,25 +111,6 @@ class GameLauncherApp(ctk.CTk):
             command=self.add_game_dialog
         )
         add_game_btn.pack(padx=10, pady=(0, 10), fill="x")
-
-        self.steam_import_btn = ctk.CTkButton(
-            self.left_frame,
-            text="Steam-Auto-Import",
-            command=self.add_steam_library_dialog
-        )
-        self.steam_import_btn.pack(padx=10, pady=(0, 10), fill="x")
-
-        # ----- Rechte Seite (Platzhalter – hier können wir später Details anzeigen) -----
-        self.games_right_frame = ctk.CTkFrame(self.games_tab, corner_radius=0)
-        self.games_right_frame.grid(
-            row=0, column=1, sticky="nsew", padx=(10, 0))
-
-        placeholder = ctk.CTkLabel(
-            self.games_right_frame,
-            text="Hier könnten später Game-Details stehen\n(z.B. Cover, Beschreibung, Playtime, ...)",
-            justify="left"
-        )
-        placeholder.pack(padx=10, pady=10, anchor="nw")
 
     # --------------------------
     # System-Tab
@@ -260,6 +240,15 @@ class GameLauncherApp(ctk.CTk):
         self.launchers_frame = ctk.CTkFrame(self.system_tab)
         self.launchers_frame.grid(row=5, column=0, sticky="nw")
 
+        # Steam-Import-Button nur wenn Steam installiert ist
+        if self.detect_launchers().get("Steam", False):
+            self.steam_import_btn = ctk.CTkButton(
+            self.system_tab,
+            text="Steam-Bibliothek importieren",
+            command=self.add_steam_library_dialog
+            )
+            self.steam_import_btn.grid(row=6, column=0, sticky="ew", padx=10, pady=(10, 10))
+
         # Inhalte füllen
         self.refresh_disk_info()
         self.refresh_launcher_info()
@@ -363,6 +352,10 @@ class GameLauncherApp(ctk.CTk):
         )
 
     def render_game_buttons(self):
+        if not hasattr(self, "games"):
+            self.games = []
+
+        # Weiter machen
         for child in self.games_scroll.winfo_children():
             child.destroy()
 
