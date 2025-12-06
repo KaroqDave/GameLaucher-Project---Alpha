@@ -1,6 +1,5 @@
 import os
 import json
-import subprocess
 import psutil
 import customtkinter as ctk
 import tkinter as tk
@@ -17,8 +16,8 @@ class GameLauncherApp(ctk.CTk):
         ctk.set_appearance_mode("dark")       # Startmodus
         ctk.set_default_color_theme("dark-blue")
 
-        self.title("Game Launcher & System Monitor - Alpha v0.0.1")
-        self.geometry("1080x520")
+        self.title("Game Launcher + System Monitor (Alpha v0.0.3)")
+        self.geometry("950x520")
         self.minsize(850, 450)
 
         # Grid: Zeile 0 = Header, Zeile 1 = Inhalt
@@ -39,7 +38,7 @@ class GameLauncherApp(ctk.CTk):
         # UI
         self.create_header_bar()
         self.create_left_panel()
-        self.create_right_panel()
+        self.create_right_panel()  # enthält jetzt Tabs
 
         # System-Monitor starten
         self.update_system_stats()
@@ -60,15 +59,15 @@ class GameLauncherApp(ctk.CTk):
         )
         title_label.grid(row=0, column=0, padx=15, pady=5, sticky="w")
 
-        #self.appearance_mode_var = ctk.StringVar(value="dark")
-        #appearance_menu = ctk.CTkOptionMenu(
-            #header,
-            #values=["dark", "light", "system"],
-            #variable=self.appearance_mode_var,
-            #command=self.change_appearance_mode,
-            #width=120
-        #)
-        #appearance_menu.grid(row=0, column=1, padx=15, pady=5, sticky="e")
+        self.appearance_mode_var = ctk.StringVar(value="dark")
+        appearance_menu = ctk.CTkOptionMenu(
+            header,
+            values=["dark", "light", "system"],
+            variable=self.appearance_mode_var,
+            command=self.change_appearance_mode,
+            width=120
+        )
+        appearance_menu.grid(row=0, column=1, padx=15, pady=5, sticky="e")
 
     def change_appearance_mode(self, mode: str):
         ctk.set_appearance_mode(mode)
@@ -125,8 +124,7 @@ class GameLauncherApp(ctk.CTk):
         if not self.games:
             empty_label = ctk.CTkLabel(
                 self.games_scroll,
-                # text="Noch keine Spiele.\nKlick auf '+ Spiel hinzufügen'.", // DEPRECATED
-                text="Noch keine Spiele vorhanden. \nKlicke auf '+ Spiel hinzufügen', um manuel Spiele hinzuzufügen.",
+                text="Noch keine Spiele.\nKlick auf '+ Spiel hinzufügen'.",
                 justify="left"
             )
             empty_label.pack(padx=10, pady=10, anchor="w")
@@ -198,42 +196,79 @@ class GameLauncherApp(ctk.CTk):
             messagebox.showerror("Fehler beim Starten", str(e))
 
     # --------------------------
-    # Rechtes Panel – System Monitor
+    # Rechtes Panel – Tabs (System / Settings)
     # --------------------------
     def create_right_panel(self):
         self.right_frame = ctk.CTkFrame(self, corner_radius=0)
         self.right_frame.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=10)
 
-        self.right_frame.grid_rowconfigure(0, weight=0)
-        self.right_frame.grid_rowconfigure(1, weight=0)
-        self.right_frame.grid_rowconfigure(2, weight=0)
-        self.right_frame.grid_rowconfigure(3, weight=1)
+        self.right_frame.grid_rowconfigure(0, weight=1)
         self.right_frame.grid_columnconfigure(0, weight=1)
 
+        # TabView
+        self.tabview = ctk.CTkTabview(self.right_frame)
+        self.tabview.grid(row=0, column=0, sticky="nsew")
+
+        # Tabs anlegen
+        self.system_tab = self.tabview.add("System")
+        self.settings_tab = self.tabview.add("Settings")
+
+        # ----- System-Tab Inhalt -----
+        self.system_tab.grid_rowconfigure(0, weight=0)
+        self.system_tab.grid_rowconfigure(1, weight=0)
+        self.system_tab.grid_rowconfigure(2, weight=0)
+        self.system_tab.grid_rowconfigure(3, weight=1)
+        self.system_tab.grid_columnconfigure(0, weight=1)
+
         title_label = ctk.CTkLabel(
-            self.right_frame,
+            self.system_tab,
             text="System Monitor",
             font=ctk.CTkFont(size=16, weight="bold")
         )
-        title_label.grid(row=0, column=0, sticky="w", pady=(0, 5))
+        title_label.grid(row=0, column=0, sticky="w", pady=(0, 10))
 
-        self.cpu_label = ctk.CTkLabel(self.right_frame, text="CPU: - %")
-        self.cpu_label.grid(row=1, column=0, sticky="w", pady=2)
+        self.cpu_label = ctk.CTkLabel(self.system_tab, text="CPU: - %")
+        self.cpu_label.grid(row=1, column=0, sticky="w", pady=(0, 2))
 
-        self.ram_label = ctk.CTkLabel(self.right_frame, text="RAM: - %")
-        self.ram_label.grid(row=2, column=0, sticky="w", pady=2)
+        self.ram_label = ctk.CTkLabel(self.system_tab, text="RAM: - %")
+        self.ram_label.grid(row=2, column=0, sticky="w", pady=(0, 2))
 
-        # Zusatzinfos (statischer Text)
         extra_text = (
             f"Gesamt-RAM: {self.total_ram_gb:.1f} GB\n"
             f"CPU-Cores: {self.physical_cores} physisch / {self.logical_cores} logisch"
         )
         self.extra_info = ctk.CTkLabel(
-            self.right_frame,
+            self.system_tab,
             text=extra_text,
             justify="left"
         )
-        self.extra_info.grid(row=3, column=0, sticky="nw", pady=(5, 0))
+        self.extra_info.grid(row=3, column=0, sticky="nw", pady=(10, 0))
+
+        # ----- Settings-Tab Inhalt (Platzhalter) -----
+        self.settings_tab.grid_rowconfigure(0, weight=0)
+        self.settings_tab.grid_rowconfigure(1, weight=0)
+        self.settings_tab.grid_rowconfigure(2, weight=1)
+        self.settings_tab.grid_columnconfigure(0, weight=1)
+
+        settings_title = ctk.CTkLabel(
+            self.settings_tab,
+            text="Settings (coming soon)",
+            font=ctk.CTkFont(size=16, weight="bold")
+        )
+        settings_title.grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+        settings_hint = ctk.CTkLabel(
+            self.settings_tab,
+            text=(
+                "Hier kommen später Optionen rein wie z.B.:\n"
+                "- Standard Theme\n"
+                "- Pfade / Steam-Auto-Detection Einstellungen\n"
+                "- Backup / Restore der games.json\n"
+                "- Sprache / UI-Feintuning"
+            ),
+            justify="left"
+        )
+        settings_hint.grid(row=1, column=0, sticky="nw")
 
     def update_system_stats(self):
         try:
