@@ -97,11 +97,6 @@ class GameLauncherApp(ctk.CTk):
     # --------------------------
     # Linkes Panel – Game Liste
     # --------------------------
-    
-    def create_steam_pathing(self):
-        pass
-    
-
     def create_left_panel(self):
         self.left_frame = ctk.CTkFrame(self, corner_radius=0)
         self.left_frame.grid(row=1, column=0, sticky="nsw")
