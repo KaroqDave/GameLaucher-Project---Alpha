@@ -120,6 +120,7 @@ class GameLauncherApp(ctk.CTk):
             self.games_count_label.configure(
                 text=f"Installierte Spiele: {len(self.games)}"
             )
+
     def refresh_disk_info(self):
         # Frame leeren
         for child in self.disks_frame.winfo_children():
@@ -142,12 +143,13 @@ class GameLauncherApp(ctk.CTk):
                 text=f"{part.device} ({part.mountpoint}) – {total_gb:.1f} GB, benutzt: {used_percent:.1f} %"
             )
             label.pack(anchor="w", padx=5, pady=2)
+
     def refresh_launcher_info(self):
         # Frame leeren
         for child in self.launchers_frame.winfo_children():
             child.destroy()
 
-        launchers = self.detect_launchers()
+        launchers = getattr(self, "launchers_status", self.detect_launchers())
 
         for name, found in launchers.items():
             status = "✅ Gefunden" if found else "❌ Nicht gefunden"
@@ -240,12 +242,15 @@ class GameLauncherApp(ctk.CTk):
         self.launchers_frame = ctk.CTkFrame(self.system_tab)
         self.launchers_frame.grid(row=5, column=0, sticky="nw")
 
+        # Launcher einmal erkennen und merken
+        self.launchers_status = self.detect_launchers()
+
         # Steam-Import-Button nur wenn Steam installiert ist
-        if self.detect_launchers().get("Steam", False):
+        if self.launchers_status.get("Steam", False):
             self.steam_import_btn = ctk.CTkButton(
-            self.system_tab,
-            text="Steam-Bibliothek importieren",
-            command=self.add_steam_library_dialog
+                self.system_tab,
+                text="Steam-Bibliothek importieren",
+                command=self.add_steam_library_dialog
             )
             self.steam_import_btn.grid(row=6, column=0, sticky="ew", padx=10, pady=(10, 10))
 
