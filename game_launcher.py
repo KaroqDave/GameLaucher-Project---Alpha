@@ -6,6 +6,7 @@ import tkinter as tk
 import winreg # NEU: für Registry-Zugriff (nur Windows)
 import os # NEU: für normalize_path
 from tkinter import filedialog, messagebox
+from PIL import Image
 
 GAMES_FILE = "games.json"
 
@@ -50,14 +51,19 @@ def read_first_existing_reg_value(candidates):
 class GameLauncherApp(ctk.CTk):
     def __init__(self):
         super().__init__()
+        self.iconbitmap("assets/game_launcher.ico")
 
         # ----- Grundkonfiguration -----
         ctk.set_appearance_mode("dark")       # Startmodus
         ctk.set_default_color_theme("dark-blue")
 
         self.title("Game Launcher")
-        self.geometry("950x600")      # Startgröße
-        self.minsize(950, 600)        # Mindestgröße
+
+        # Fenster zentrale Größe und Position
+        window_width = 1000
+        window_height = 700
+        self.geometry(f"{window_width}x{window_height}")
+        self.center_window(window_width, window_height)
 
         # Spiele laden
         self.games = []
@@ -72,33 +78,42 @@ class GameLauncherApp(ctk.CTk):
         self.create_main_tabs()               # NEU statt left/right panel
 
     # --------------------------
+    # Fenster zentrieren
+    # --------------------------
+    def center_window(self, width, height):
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        self.geometry(f"+{x}+{y}")
+
+    # --------------------------
     # Header-Bar
     # --------------------------
     def create_header_bar(self):
-        header = ctk.CTkFrame(self, height=40, corner_radius=0)
-        header.grid(row=0, column=0, columnspan=2, sticky="nsew")
-        header.grid_columnconfigure(0, weight=1)
-        header.grid_columnconfigure(1, weight=0)
+        self.header_frame = ctk.CTkFrame(self, corner_radius=0)
+        self.header_frame.grid(row=0, column=0, sticky="ew")
+        self.header_frame.grid_columnconfigure(0, weight=1)
 
-        title_label = ctk.CTkLabel(
-            header,
-            text="🎮 Game Launcher - Alpha",
-            font=ctk.CTkFont(size=18, weight="bold")
+        logo_image = ctk.CTkImage(
+            light_image=Image.open("assets/game_launcher.png"),
+            dark_image=Image.open("assets/game_launcher.png"),
+            size=(42, 42)
         )
-        title_label.grid(row=0, column=0, padx=15, pady=5, sticky="w")
 
-        self.appearance_mode_var = ctk.StringVar(value="dark")
-        appearance_menu = ctk.CTkOptionMenu(
-            header,
-            values=["dark", "light", "system"],
-            variable=self.appearance_mode_var,
-            command=self.change_appearance_mode,
-            width=120
+        self.logo_label = ctk.CTkLabel(
+            self.header_frame,
+            image=logo_image,
+            text=""
         )
-        appearance_menu.grid(row=0, column=1, padx=15, pady=5, sticky="e")
+        self.logo_label.grid(row=0, column=0, pady=(5, 0))
 
-    def change_appearance_mode(self, mode: str):
-        ctk.set_appearance_mode(mode)
+        self.title_label = ctk.CTkLabel(
+            self.header_frame,
+            text="Game Launcher - Alpha",
+            font=ctk.CTkFont(size=20, weight="bold")
+        )
+        self.title_label.grid(row=1, column=0)
 
     # --------------------------
     # Main-Tabs
@@ -139,7 +154,7 @@ class GameLauncherApp(ctk.CTk):
         title_label.pack(padx=10, pady=(10, 5), anchor="w")
 
         # Scrollbare Liste – keine feste width mehr, damit sie die Breite nutzen kann
-        self.games_scroll = ctk.CTkScrollableFrame(self.left_frame, height=380)
+        self.games_scroll = ctk.CTkScrollableFrame(self.left_frame)
         self.games_scroll.pack(padx=10, pady=(0, 10), fill="both", expand=True)
 
         self.render_game_buttons()
@@ -396,16 +411,39 @@ class GameLauncherApp(ctk.CTk):
     # --------------------------
     # Settings-Tab
     # --------------------------
+    def change_appearance_mode(self, new_mode: str):
+        # customtkinter akzeptiert "System", "Dark", "Light"
+        ctk.set_appearance_mode(new_mode)
+
     def create_settings_tab_content(self):
         self.settings_tab.grid_rowconfigure(0, weight=0)
+        self.settings_tab.grid_rowconfigure(1, weight=0)
+        self.settings_tab.grid_rowconfigure(2, weight=1)
         self.settings_tab.grid_columnconfigure(0, weight=1)
 
-        label = ctk.CTkLabel(
+        title_label = ctk.CTkLabel(
             self.settings_tab,
-            text="Settings (coming soon)\nHier kommen später Theme-, Pfad- und andere Optionen hin.",
-            justify="left"
+            text="Settings",
+            font=ctk.CTkFont(size=16, weight="bold")
         )
-        label.grid(row=0, column=0, sticky="nw", pady=10, padx=10)
+        title_label.grid(row=0, column=0, sticky="w", pady=(10, 10), padx=10)
+
+        # Theme-Auswahl
+        theme_label = ctk.CTkLabel(
+            self.settings_tab,
+            text="Theme:"
+        )
+        theme_label.grid(row=1, column=0, sticky="w", padx=10, pady=(0, 5))
+
+        self.theme_var = ctk.StringVar(value="Dark")  # Startwert
+
+        self.theme_optionmenu = ctk.CTkOptionMenu(
+            self.settings_tab,
+            values=["System", "Dark", "Light"],
+            variable=self.theme_var,
+            command=self.change_appearance_mode
+        )
+        self.theme_optionmenu.grid(row=1, column=0, sticky="w", padx=80, pady=(0, 5))
 
 
     # --------------------------
