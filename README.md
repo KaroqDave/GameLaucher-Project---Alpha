@@ -1,5 +1,5 @@
 # 🎮 GameLauncher Project – Alpha v0.0.6  
-Ein moderner, anpassbarer **Game Launcher** mit integriertem **System Monitoring**, gebaut in Python mit *customtkinter*.  
+Ein moderner, anpassbarer **Game Launcher**, gebaut in Python mit *customtkinter*.  
 Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
 ---
@@ -31,16 +31,16 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
 ---
 
-🛠 Roadmap (Beta Ziele)
+## 🛠 Roadmap (Beta Ziele)
 
-Game Icons (Steam, Epic, Battle.net)
-Kategorien & Tags
-Favoriten / Sterne
-Custom Themes
+- Game Icons (Steam, Epic, Battle.net)
+- Kategorien & Tags
+- Favoriten / Sterne
+- Custom Themes
 
 ### In Arbeit
-Auto-Detect von installierten Games
-Auto-Detect von installierten Launchern
+- Auto-Detect von installierten Games
+- Auto-Detect von installierten Launchern
 
 ### Fertig
-Tabs: Games / System / Settings
+- Tabs: Games / System / Settings
