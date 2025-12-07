@@ -5,6 +5,10 @@ import customtkinter as ctk
 import tkinter as tk
 import winreg
 import sys
+import win32gui
+import win32ui
+import win32con
+import win32api
 from tkinter import filedialog, messagebox
 from PIL import Image
 
@@ -53,9 +57,90 @@ def read_first_existing_reg_value(candidates):
             return val
     return None
 
+# Icon aus EXE extrahieren
+def load_icon_from_exe(self, exe_path: str, size=(48, 48)):
+    try:
+        # Versuch, Icon zu extrahieren
+        large, small = win32gui.ExtractIconEx(exe_path, 0)
+        hicon = None
+
+        if large:
+            hicon = large[0]
+        elif small:
+            hicon = small[0]
+
+        if not hicon:
+            return None
+
+        # Device Contexts erzeugen
+        hdc = win32ui.CreateDCFromHandle(win32gui.GetDC(0))
+        hdc_mem = hdc.CreateCompatibleDC()
+
+        hbmp = win32ui.CreateBitmap()
+        hbmp.CreateCompatibleBitmap(hdc, size[0], size[1])
+        hdc_mem.SelectObject(hbmp)
+
+        # Icon in den Bitmap-DC zeichnen
+        win32gui.DrawIconEx(
+            hdc_mem.GetSafeHdc(),
+            0,
+            0,
+            hicon,
+            size[0],
+            size[1],
+            0,
+            None,
+            win32con.DI_NORMAL,
+        )
+
+        # Bitmap nach PIL umwandeln
+        bmpinfo = hbmp.GetInfo()
+        bmpstr = hbmp.GetBitmapBits(True)
+
+        img = Image.frombuffer(
+            "RGB",
+            (bmpinfo["bmWidth"], bmpinfo["bmHeight"]),
+            bmpstr,
+            "raw",
+            "BGRX",
+            0,
+            1,
+        )
+
+        # Aufräumen
+        win32gui.DestroyIcon(hicon)
+        hdc_mem.DeleteDC()
+        hdc.DeleteDC()
+        hbmp.DeleteObject()
+
+        return img
+
+    except Exception as e:
+        print(f"Icon extraction failed for {exe_path}: {e}")
+        return None
+
+# Spiele Icon laden (mit Caching)
+def get_game_icon_image(self, exe_path: str, size=(48, 48)) -> ctk.CTkImage:
+    # Cache check
+    if exe_path in self.game_icon_cache:
+        return self.game_icon_cache[exe_path]
+
+    pil_img = self.load_icon_from_exe(exe_path, size=size)
+
+    if pil_img is None:
+        # Fallback: dein Default-Icon
+        fallback_path = resource_path("assets/game_launcher.png")
+        pil_img = Image.open(fallback_path)
+
+    ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=size)
+    self.game_icon_cache[exe_path] = ctk_img
+    return ctk_img
+
+
 class GameLauncherApp(ctk.CTk):
     def __init__(self):
         super().__init__()
+        self.game_icon_cache = {}
         icon_path = resource_path("assets/game_launcher.ico")
         self.iconbitmap(icon_path)
 
