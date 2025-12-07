@@ -25,6 +25,27 @@ def normalize_path(p):
 
     return drive + tail                   # 'C:\program files\steam\steam.exe'
 
+# Registry-Lesehilfe
+def read_reg_str(root, subkey, value_name):
+    """Liest einen String-Wert aus der Registry oder gibt "None" zurück."""
+    try:
+        with winreg.OpenKey(root, subkey) as key:
+            value, _ = winreg.QueryValueEx(key, value_name)
+            return str(value)
+    except OSError:
+        return None
+
+# Erste Value aus Registry lesen
+def read_first_existing_reg_value(candidates):
+    """
+    candidates: Liste von (root, subkey, value_name)
+    Gibt den ersten gefundenen String-Wert zurück oder None.
+    """
+    for root, subkey, value_name in candidates:
+        val = read_reg_str(root, subkey, value_name)
+        if val:
+            return val
+    return None
 
 class GameLauncherApp(ctk.CTk):
     def __init__(self):
@@ -187,16 +208,6 @@ class GameLauncherApp(ctk.CTk):
             )
             label.pack(anchor="w", padx=5, pady=2)
 
-    # Registry-Lesehilfe
-    def read_reg_str(self, root, subkey, value_name):
-        """Liest einen String-Wert aus der Registry oder gibt "None" zurück."""
-        try:
-            with winreg.OpenKey(root, subkey) as key:
-                value, _ = winreg.QueryValueEx(key, value_name)
-                return str(value)
-        except OSError:
-            return None
-
     # Bekannte Launcher erkennen
     def detect_launchers(self):
         """Erkennt bekannte Launcher über die Windows-Registry.
@@ -214,12 +225,15 @@ class GameLauncherApp(ctk.CTk):
         launchers = {}
 
         # ---- Steam ----
-        steam_path = (
-            self.read_reg_str(winreg.HKEY_CURRENT_USER,
-                        r"Software\Valve\Steam", "SteamPath")
-            or self.read_reg_str(winreg.HKEY_LOCAL_MACHINE,
-                            r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath")
-        )
+        steam_path = read_first_existing_reg_value([
+            (winreg.HKEY_CURRENT_USER,
+            r"Software\Valve\Steam", "SteamPath"),
+            (winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Valve\Steam", "InstallPath"),
+            (winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath"),
+        ])
+
         if steam_path:
             steam_exe = os.path.join(steam_path, "steam.exe")
             installed = os.path.exists(steam_exe)
@@ -231,26 +245,28 @@ class GameLauncherApp(ctk.CTk):
             launchers["Steam"] = {"installed": False, "install_path": None}
 
         # ---- Epic Games Launcher ----
-        epic_path = self.read_reg_str(
-            winreg.HKEY_LOCAL_MACHINE,
-            r"SOFTWARE\WOW6432Node\Epic Games\EpicGamesLauncher",
-            "InstallLocation",
-        )
-        if epic_path:
-            epic_exe = os.path.join(epic_path, "EpicGamesLauncher.exe")
+        epic_dir = read_first_existing_reg_value([
+            (winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Epic Games\EpicGamesLauncher", "InstallLocation"),
+            (winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Epic Games\EpicGamesLauncher", "InstallLocation"),
+        ])
+
+        if epic_dir:
+            epic_exe = os.path.join(epic_dir, "Launcher", "Portal", "Binaries", "Win64", "EpicGamesLauncher.exe")
             installed = os.path.exists(epic_exe)
             launchers["Epic Games"] = {
                 "installed": installed,
-                "install_path": epic_exe if installed else epic_path,
+                "install_path": epic_exe if installed else epic_dir,
             }
         else:
             launchers["Epic Games"] = {"installed": False, "install_path": None}
 
         # ---- EA App ----
         ea_path = (
-            self.read_reg_str(winreg.HKEY_LOCAL_MACHINE, 
+            read_reg_str(winreg.HKEY_LOCAL_MACHINE, 
                               r"SOFTWARE\Electronic Arts\EA Desktop", "LauncherAppPath")
-            or self.read_reg_str(winreg.HKEY_LOCAL_MACHINE, 
+            or read_reg_str(winreg.HKEY_LOCAL_MACHINE, 
                                  r"SOFTWARE\WOW6432Node\Electronic Arts\EA Desktop", "LauncherAppPath")
         )
         if ea_path:
@@ -263,11 +279,13 @@ class GameLauncherApp(ctk.CTk):
             launchers["EA App"] = {"installed": False, "install_path": None}
 
         # ---- Ubisoft Connect ----
-        ubi_dir = self.read_reg_str(
-            winreg.HKEY_LOCAL_MACHINE,
-            r"SOFTWARE\WOW6432Node\Ubisoft\Launcher",
-            "InstallDir",
-        )
+        ubi_dir = read_first_existing_reg_value([
+            (winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Ubisoft\Launcher", "InstallDir"),
+            (winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Ubisoft\Launcher", "InstallDir"),
+        ])
+
         if ubi_dir:
             ubi_exe = os.path.join(ubi_dir, "UbisoftConnect.exe")
             installed = os.path.exists(ubi_exe)
@@ -279,11 +297,13 @@ class GameLauncherApp(ctk.CTk):
             launchers["Ubisoft Connect"] = {"installed": False, "install_path": None}
 
         # ---- Battle.net ----
-        bnet_dir = self.read_reg_str(
-            winreg.HKEY_LOCAL_MACHINE,
-            r"SOFTWARE\WOW6432Node\Blizzard Entertainment\Battle.net",
-            "InstallPath",
-        )
+        bnet_dir = read_first_existing_reg_value([
+            (winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Blizzard Entertainment\Battle.net", "InstallPath"),
+            (winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Blizzard Entertainment\Battle.net", "InstallPath"),
+        ])
+
         if bnet_dir:
             bnet_exe = os.path.join(bnet_dir, "Battle.net.exe")
             installed = os.path.exists(bnet_exe)
@@ -295,11 +315,13 @@ class GameLauncherApp(ctk.CTk):
             launchers["Battle.net"] = {"installed": False, "install_path": None}
 
         # ---- GOG Galaxy ----
-        gog_dir = self.read_reg_str(
-            winreg.HKEY_LOCAL_MACHINE,
-            r"SOFTWARE\WOW6432Node\GOG.com\GalaxyClient",
-            "path",
-        )
+        gog_dir = read_first_existing_reg_value([
+            (winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\GOG.com\GalaxyClient", "path"),
+            (winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\GOG.com\GalaxyClient", "path"),
+        ])
+
         if gog_dir:
             gog_exe = os.path.join(gog_dir, "GalaxyClient.exe")
             installed = os.path.exists(gog_exe)
