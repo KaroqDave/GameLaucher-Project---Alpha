@@ -3,16 +3,26 @@ import json
 import psutil
 import customtkinter as ctk
 import tkinter as tk
-import winreg # NEU: für Registry-Zugriff (nur Windows)
-import os # NEU: für normalize_path
+import winreg
+import sys
 from tkinter import filedialog, messagebox
 from PIL import Image
 
 GAMES_FILE = "games.json"
 
+# Pfad zu einer Ressource (für PyInstaller)
+def resource_path(relative_path: str) -> str:
+    try:
+        # PyInstaller packt alles nach _MEIPASS
+        base_path = sys._MEIPASS  # type: ignore[attr-defined]
+    except AttributeError:
+        # normaler Python-Run: Verzeichnis der aktuellen Datei
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+    return os.path.join(base_path, relative_path)
+
 # Den Pfad für die Anzeige normalisieren (Backslashes zu Slashes ändern, Kleinbuchstaben zu Großbuchstaben etc.)
 def normalize_path(p):
-    """Pfad hübsch machen: C:\..., Backslashes, normiert."""
     if not p:
         return p
 
@@ -28,7 +38,6 @@ def normalize_path(p):
 
 # Registry-Lesehilfe
 def read_reg_str(root, subkey, value_name):
-    """Liest einen String-Wert aus der Registry oder gibt "None" zurück."""
     try:
         with winreg.OpenKey(root, subkey) as key:
             value, _ = winreg.QueryValueEx(key, value_name)
@@ -38,10 +47,6 @@ def read_reg_str(root, subkey, value_name):
 
 # Erste Value aus Registry lesen
 def read_first_existing_reg_value(candidates):
-    """
-    candidates: Liste von (root, subkey, value_name)
-    Gibt den ersten gefundenen String-Wert zurück oder None.
-    """
     for root, subkey, value_name in candidates:
         val = read_reg_str(root, subkey, value_name)
         if val:
@@ -51,7 +56,8 @@ def read_first_existing_reg_value(candidates):
 class GameLauncherApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.iconbitmap("assets/game_launcher.ico")
+        icon_path = resource_path("assets/game_launcher.ico")
+        self.iconbitmap(icon_path)
 
         # ----- Grundkonfiguration -----
         ctk.set_appearance_mode("dark")       # Startmodus
@@ -95,10 +101,12 @@ class GameLauncherApp(ctk.CTk):
         self.header_frame.grid(row=0, column=0, sticky="ew")
         self.header_frame.grid_columnconfigure(0, weight=1)
 
+        logo_path = resource_path("assets/game_launcher.png")
+
         logo_image = ctk.CTkImage(
-            light_image=Image.open("assets/game_launcher.png"),
-            dark_image=Image.open("assets/game_launcher.png"),
-            size=(42, 42)
+            light_image=Image.open(logo_path),
+            dark_image=Image.open(logo_path),
+            size=(32, 32)
         )
 
         self.logo_label = ctk.CTkLabel(
@@ -225,18 +233,6 @@ class GameLauncherApp(ctk.CTk):
 
     # Bekannte Launcher erkennen
     def detect_launchers(self):
-        """Erkennt bekannte Launcher über die Windows-Registry.
-
-        Rückgabe:
-            {
-                "Steam":       {"installed": bool, "install_path": str | None},
-                "Epic Games":  {"installed": bool, "install_path": str | None},
-                "EA App":      {"installed": bool, "install_path": str | None},
-                "Ubisoft Connect": {"installed": bool, "install_path": str | None},
-                "Battle.net":  {"installed": bool, "install_path": str | None},
-                "GOG Galaxy":  {"installed": bool, "install_path": str | None},
-            }
-        """
         launchers = {}
 
         # ---- Steam ----
