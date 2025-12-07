@@ -3,9 +3,27 @@ import json
 import psutil
 import customtkinter as ctk
 import tkinter as tk
+import winreg # NEU: für Registry-Zugriff (nur Windows)
+import os # NEU: für normalize_path
 from tkinter import filedialog, messagebox
 
 GAMES_FILE = "games.json"
+
+# Den Pfad für die Anzeige normalisieren (Backslashes zu Slashes ändern, Kleinbuchstaben zu Großbuchstaben etc.)
+def normalize_path(p):
+    """Pfad hübsch machen: C:\..., Backslashes, normiert."""
+    if not p:
+        return p
+
+    # Erst normalisieren: Slashes und .. usw.
+    p = os.path.normpath(p)
+
+    # Laufwerk explizit groß schreiben
+    drive, tail = os.path.splitdrive(p)   # z.B. ('c:', '\\program files\\steam\\steam.exe')
+    if drive:
+        drive = drive.upper()             # 'C:' statt 'c:'
+
+    return drive + tail                   # 'C:\program files\steam\steam.exe'
 
 
 class GameLauncherApp(ctk.CTk):
@@ -43,7 +61,7 @@ class GameLauncherApp(ctk.CTk):
 
         title_label = ctk.CTkLabel(
             header,
-            text="🎮 Game Launcher  •  System Monitor",
+            text="🎮 Game Launcher - Alpha",
             font=ctk.CTkFont(size=18, weight="bold")
         )
         title_label.grid(row=0, column=0, padx=15, pady=5, sticky="w")
@@ -149,55 +167,150 @@ class GameLauncherApp(ctk.CTk):
         for child in self.launchers_frame.winfo_children():
             child.destroy()
 
+        # Wenn wir schon gescannt haben, reuse – sonst neu scannen
         launchers = getattr(self, "launchers_status", self.detect_launchers())
 
-        for name, found in launchers.items():
+        for name, info in launchers.items():
+            found = info.get("installed", False)
+            path = info.get("install_path") or "Pfad unbekannt"
+
             status = "✅ Gefunden" if found else "❌ Nicht gefunden"
+            text = f"{name}: {status}"
+            if found and path != "Pfad unbekannt":
+                nice_path = normalize_path(path)
+                text += f"\n  → {nice_path}"
+
             label = ctk.CTkLabel(
                 self.launchers_frame,
-                text=f"{name}: {status}"
+                text=text,
+                justify="left"
             )
             label.pack(anchor="w", padx=5, pady=2)
-            
+
+    # Registry-Lesehilfe
+    def read_reg_str(self, root, subkey, value_name):
+        """Liest einen String-Wert aus der Registry oder gibt "None" zurück."""
+        try:
+            with winreg.OpenKey(root, subkey) as key:
+                value, _ = winreg.QueryValueEx(key, value_name)
+                return str(value)
+        except OSError:
+            return None
+
     # Bekannte Launcher erkennen
     def detect_launchers(self):
-        """Prüft ein paar Standard-Pfade für bekannte Launcher."""
-        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
-        program_files_x86 = os.environ.get(
-            "ProgramFiles(x86)", r"C:\Program Files (x86)")
+        """Erkennt bekannte Launcher über die Windows-Registry.
 
-        candidates = {
-            "Steam": [
-                os.path.join(program_files_x86, "Steam", "steam.exe"),
-                os.path.join(program_files, "Steam", "steam.exe"),
-            ],
-            "Epic Games": [
-                os.path.join(program_files_x86, "Epic Games", "Launcher",
-                             "Portal", "Binaries", "Win64", "EpicGamesLauncher.exe"),
-            ],
-            "EA App": [
-                os.path.join(program_files, "Electronic Arts",
-                             "EA Desktop", "EA Desktop", "EADesktop.exe"),
-            ],
-            "Ubisoft Connect": [
-                os.path.join(program_files_x86, "Ubisoft",
-                             "Ubisoft Game Launcher", "upc.exe"),
-            ],
-            "Battle.net": [
-                os.path.join(program_files_x86,
-                             "Battle.net", "Battle.net.exe"),
-            ],
-            "GOG Galaxy": [
-                os.path.join(program_files_x86, "GOG Galaxy",
-                             "GalaxyClient.exe"),
-            ],
-        }
+        Rückgabe:
+            {
+                "Steam":       {"installed": bool, "install_path": str | None},
+                "Epic Games":  {"installed": bool, "install_path": str | None},
+                "EA App":      {"installed": bool, "install_path": str | None},
+                "Ubisoft Connect": {"installed": bool, "install_path": str | None},
+                "Battle.net":  {"installed": bool, "install_path": str | None},
+                "GOG Galaxy":  {"installed": bool, "install_path": str | None},
+            }
+        """
+        launchers = {}
 
-        result = {}
-        for name, paths in candidates.items():
-            found = any(os.path.exists(p) for p in paths)
-            result[name] = found
-        return result
+        # ---- Steam ----
+        steam_path = (
+            self.read_reg_str(winreg.HKEY_CURRENT_USER,
+                        r"Software\Valve\Steam", "SteamPath")
+            or self.read_reg_str(winreg.HKEY_LOCAL_MACHINE,
+                            r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath")
+        )
+        if steam_path:
+            steam_exe = os.path.join(steam_path, "steam.exe")
+            installed = os.path.exists(steam_exe)
+            launchers["Steam"] = {
+                "installed": installed,
+                "install_path": steam_exe if installed else steam_path,
+            }
+        else:
+            launchers["Steam"] = {"installed": False, "install_path": None}
+
+        # ---- Epic Games Launcher ----
+        epic_path = self.read_reg_str(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Epic Games\EpicGamesLauncher",
+            "InstallLocation",
+        )
+        if epic_path:
+            epic_exe = os.path.join(epic_path, "EpicGamesLauncher.exe")
+            installed = os.path.exists(epic_exe)
+            launchers["Epic Games"] = {
+                "installed": installed,
+                "install_path": epic_exe if installed else epic_path,
+            }
+        else:
+            launchers["Epic Games"] = {"installed": False, "install_path": None}
+
+        # ---- EA App ----
+        ea_path = (
+            self.read_reg_str(winreg.HKEY_LOCAL_MACHINE, 
+                              r"SOFTWARE\Electronic Arts\EA Desktop", "LauncherAppPath")
+            or self.read_reg_str(winreg.HKEY_LOCAL_MACHINE, 
+                                 r"SOFTWARE\WOW6432Node\Electronic Arts\EA Desktop", "LauncherAppPath")
+        )
+        if ea_path:
+            installed = os.path.exists(ea_path)
+            launchers["EA App"] = {
+                "installed": installed,
+                "install_path": ea_path if installed else None,
+            }
+        else:
+            launchers["EA App"] = {"installed": False, "install_path": None}
+
+        # ---- Ubisoft Connect ----
+        ubi_dir = self.read_reg_str(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Ubisoft\Launcher",
+            "InstallDir",
+        )
+        if ubi_dir:
+            ubi_exe = os.path.join(ubi_dir, "UbisoftConnect.exe")
+            installed = os.path.exists(ubi_exe)
+            launchers["Ubisoft Connect"] = {
+                "installed": installed,
+                "install_path": ubi_exe if installed else ubi_dir,
+            }
+        else:
+            launchers["Ubisoft Connect"] = {"installed": False, "install_path": None}
+
+        # ---- Battle.net ----
+        bnet_dir = self.read_reg_str(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Blizzard Entertainment\Battle.net",
+            "InstallPath",
+        )
+        if bnet_dir:
+            bnet_exe = os.path.join(bnet_dir, "Battle.net.exe")
+            installed = os.path.exists(bnet_exe)
+            launchers["Battle.net"] = {
+                "installed": installed,
+                "install_path": bnet_exe if installed else bnet_dir,
+            }
+        else:
+            launchers["Battle.net"] = {"installed": False, "install_path": None}
+
+        # ---- GOG Galaxy ----
+        gog_dir = self.read_reg_str(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\GOG.com\GalaxyClient",
+            "path",
+        )
+        if gog_dir:
+            gog_exe = os.path.join(gog_dir, "GalaxyClient.exe")
+            installed = os.path.exists(gog_exe)
+            launchers["GOG Galaxy"] = {
+                "installed": installed,
+                "install_path": gog_exe if installed else gog_dir,
+            }
+        else:
+            launchers["GOG Galaxy"] = {"installed": False, "install_path": None}
+
+        return launchers
 
     def create_system_tab_content(self):
         self.system_tab.grid_rowconfigure(0, weight=0)
@@ -245,16 +358,15 @@ class GameLauncherApp(ctk.CTk):
         # Launcher einmal erkennen und merken
         self.launchers_status = self.detect_launchers()
 
-        # Steam-Import-Button nur wenn Steam installiert ist
-        if self.launchers_status.get("Steam", False):
+        # Steam-Import-Button nur, wenn Steam installiert ist
+        if self.launchers_status.get("Steam", {}).get("installed"):
             self.steam_import_btn = ctk.CTkButton(
-                self.system_tab,
-                text="Steam-Bibliothek importieren",
-                command=self.add_steam_library_dialog
-            )
-            self.steam_import_btn.grid(row=6, column=0, sticky="ew", padx=10, pady=(10, 10))
+            self.system_tab,
+            text="Steam-Bibliothek importieren",
+            command=self.add_steam_library_dialog,
+        )
+        self.steam_import_btn.grid(row=6, column=0, sticky="ew", padx=10, pady=(10, 10))
 
-        # Inhalte füllen
         self.refresh_disk_info()
         self.refresh_launcher_info()
         self.update_games_count_label()
