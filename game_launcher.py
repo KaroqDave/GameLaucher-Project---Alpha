@@ -276,7 +276,7 @@ class GameLauncherApp(ctk.CTk):
 
         add_game_btn = ctk.CTkButton(
             self.left_frame,
-            text="Manuel Spiel hinzufügen",
+            text="Manuell Spiel hinzufügen",
             command=self.add_game_dialog
         )
         add_game_btn.pack(padx=10, pady=(0, 10), fill="x")
@@ -632,56 +632,70 @@ class GameLauncherApp(ctk.CTk):
         )
 
     def render_game_buttons(self):
+
         # Scroll-Frame leeren
         for widget in self.games_scroll.winfo_children():
             widget.destroy()
 
+        # Grid-Spalten konfigurieren (z.B. 3 Spalten)
+        columns = 3
+        for col in range(columns):
+            self.games_scroll.grid_columnconfigure(col, weight=1, uniform="games")
+
         if not self.games:
+            # Hinweis-Label über die gesamte Breite
             label = ctk.CTkLabel(
                 self.games_scroll,
-                text="Noch keine Spiele.\nKlick auf 'Manuell Spiel hinzufügen'."
+                text="Noch keine Spiele.\nKlick auf 'Manuell Spiel hinzufügen'.",
             )
-            label.pack(pady=10)
+            label.grid(row=0, column=0, columnspan=columns, pady=10, padx=10, sticky="nsew")
             return
 
-        for game in self.games:
+        # Games als Cards im Grid
+        for index, game in enumerate(self.games):
+            row, col = divmod(index, columns)
+
             card = ctk.CTkFrame(self.games_scroll, corner_radius=8)
-            card.pack(fill="x", padx=10, pady=5)
+            card.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
 
-        # Icon aus EXE
-        icon_img = self.get_game_icon_image(game["path"], size=(42, 42))
-        icon_label = ctk.CTkLabel(card, image=icon_img, text="")
-        icon_label.image = icon_img  # wichtig!
-        icon_label.pack(side="left", padx=10, pady=10)
+            # Icon aus EXE
+            icon_img = self.get_game_icon_image(game["path"], size=(56, 56))
+            icon_label = ctk.CTkLabel(card, image=icon_img, text="")
+            icon_label.image = icon_img  # wichtig!
+            icon_label.pack(side="top", pady=(8, 4))
 
-        # Spielname
-        name_label = ctk.CTkLabel(
-            card,
-            text=game["name"],
-            font=ctk.CTkFont(size=15, weight="bold")
-        )
-        name_label.pack(side="left", padx=10)
+            # Spielname
+            name_label = ctk.CTkLabel(
+                card,
+                text=game["name"],
+                font=ctk.CTkFont(size=14, weight="bold"),
+                wraplength=150,  # damit lange Namen umbrechen
+            )
+            name_label.pack(side="top", padx=8, pady=(0, 4))
 
-        # Play-Button
-        play_btn = ctk.CTkButton(
-            card,
-            text="Play",
-            width=70,
-            command=lambda p=game["path"]: self.start_game(p)
-        )
-        play_btn.pack(side="right", padx=10)
+            # Button-Leiste
+            button_frame = ctk.CTkFrame(card, fg_color="transparent")
+            button_frame.pack(side="top", pady=(0, 8))
 
-        # Remove-Button
-        del_btn = ctk.CTkButton(
-            card,
-            text="X",
-            width=30,
-            fg_color="#aa4444",
-            command=lambda g=game: self.remove_game(g)
-        )
-        del_btn.pack(side="right", padx=5)
+            play_btn = ctk.CTkButton(
+                button_frame,
+                text="Play",
+                width=70,
+                command=lambda g=game: self.launch_game(g)
+            )
+            play_btn.pack(side="left", padx=4)
 
-        # 🟦 Counter aktualisieren – GANZ WICHTIG
+            del_btn = ctk.CTkButton(
+                button_frame,
+                text="X",
+                width=30,
+                fg_color="#aa4444",
+                hover_color="#883333",
+                command=lambda g=game: self.remove_game(g)
+            )
+            del_btn.pack(side="left", padx=4)
+
+        # Counter aktualisieren
         self.update_games_count_label()
 
     def show_game_context_menu(self, event, game):

@@ -53,6 +53,7 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
 ### In Arbeit
 - Game Cards statt Textliste
+- Game Grid statt Liste
 - Auto-Detect von installierten Games
 
 ### Fertig
