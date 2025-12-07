@@ -31,16 +31,30 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
 ---
 
-## 🛠 Roadmap (Beta Ziele)
+## 🛠 Roadmap (1.0 Release Ziele)
+- Game Cards statt Textliste
+- Game Grid statt Liste
+- Automatische Games Erkennung
+- Spielzeit-Anzeige (Steam API optional)
+- EPIC / EA / Ubisoft / Battle.net Auto-Detection verbessern
+- Storage Overview (Diskbar)
+- Besseren Installed Games Counter
+- Settings speichern (Theme, Fenstergröße, Position)
+- Color Themes für den Launcher
+- About-Dialog mit Icon + Version
 
-- Game Icons (Steam, Epic, Battle.net)
-- Kategorien & Tags
-- Favoriten / Sterne
-- Custom Themes
+## Nach 1.0 Release
+- Auto-Updater (über GitHub Releases)
+- Splash Screen beim Start
+- Crash Log System
+- Blur/Glass Effect (Windows 11 Style)
+- Rounded Game Icons automatisiert
+- Animierte Buttons (Hover-Effekt)
 
 ### In Arbeit
+- Game Cards statt Textliste
 - Auto-Detect von installierten Games
-- Auto-Detect von installierten Launchern
 
 ### Fertig
+- Auto-Detect von installierten Launchern
 - Tabs: Games / System / Settings
