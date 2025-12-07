@@ -57,86 +57,6 @@ def read_first_existing_reg_value(candidates):
             return val
     return None
 
-# Icon aus EXE extrahieren
-def load_icon_from_exe(self, exe_path: str, size=(48, 48)):
-    try:
-        # Versuch, Icon zu extrahieren
-        large, small = win32gui.ExtractIconEx(exe_path, 0)
-        hicon = None
-
-        if large:
-            hicon = large[0]
-        elif small:
-            hicon = small[0]
-
-        if not hicon:
-            return None
-
-        # Device Contexts erzeugen
-        hdc = win32ui.CreateDCFromHandle(win32gui.GetDC(0))
-        hdc_mem = hdc.CreateCompatibleDC()
-
-        hbmp = win32ui.CreateBitmap()
-        hbmp.CreateCompatibleBitmap(hdc, size[0], size[1])
-        hdc_mem.SelectObject(hbmp)
-
-        # Icon in den Bitmap-DC zeichnen
-        win32gui.DrawIconEx(
-            hdc_mem.GetSafeHdc(),
-            0,
-            0,
-            hicon,
-            size[0],
-            size[1],
-            0,
-            None,
-            win32con.DI_NORMAL,
-        )
-
-        # Bitmap nach PIL umwandeln
-        bmpinfo = hbmp.GetInfo()
-        bmpstr = hbmp.GetBitmapBits(True)
-
-        img = Image.frombuffer(
-            "RGB",
-            (bmpinfo["bmWidth"], bmpinfo["bmHeight"]),
-            bmpstr,
-            "raw",
-            "BGRX",
-            0,
-            1,
-        )
-
-        # Aufräumen
-        win32gui.DestroyIcon(hicon)
-        hdc_mem.DeleteDC()
-        hdc.DeleteDC()
-        hbmp.DeleteObject()
-
-        return img
-
-    except Exception as e:
-        print(f"Icon extraction failed for {exe_path}: {e}")
-        return None
-
-# Spiele Icon laden (mit Caching)
-def get_game_icon_image(self, exe_path: str, size=(48, 48)) -> ctk.CTkImage:
-    # Cache check
-    if exe_path in self.game_icon_cache:
-        return self.game_icon_cache[exe_path]
-
-    pil_img = self.load_icon_from_exe(exe_path, size=size)
-
-    if pil_img is None:
-        # Fallback: dein Default-Icon
-        fallback_path = resource_path("assets/game_launcher.png")
-        pil_img = Image.open(fallback_path)
-
-    ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=size)
-    self.game_icon_cache[exe_path] = ctk_img
-    return ctk_img
-
-
 class GameLauncherApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -148,7 +68,7 @@ class GameLauncherApp(ctk.CTk):
         ctk.set_appearance_mode("dark")       # Startmodus
         ctk.set_default_color_theme("dark-blue")
 
-        self.title("Game Launcher")
+        self.title("Alpha Game Launcher")
 
         # Fenster zentrale Größe und Position
         window_width = 1000
@@ -230,6 +150,108 @@ class GameLauncherApp(ctk.CTk):
     # --------------------------
     # Games-Tab
     # --------------------------
+    # Icon aus EXE extrahieren
+    def load_icon_from_exe(self, exe_path: str, size=(48, 48)):
+        try:
+            large, small = win32gui.ExtractIconEx(exe_path, 0)
+            hicon = None
+
+            if large:
+                hicon = large[0]
+            elif small:
+                hicon = small[0]
+
+            if not hicon:
+                return None
+
+            # Device Contexts erzeugen
+            hdc = win32ui.CreateDCFromHandle(win32gui.GetDC(0))
+            hdc_mem = hdc.CreateCompatibleDC()
+
+            hbmp = win32ui.CreateBitmap()
+            hbmp.CreateCompatibleBitmap(hdc, size[0], size[1])
+            hdc_mem.SelectObject(hbmp)
+
+            # Icon in den Bitmap-DC zeichnen
+            win32gui.DrawIconEx(
+                hdc_mem.GetSafeHdc(),
+                0,
+                0,
+                hicon,
+                size[0],
+                size[1],
+                0,
+                None,
+                win32con.DI_NORMAL,
+            )
+
+            # Bitmap nach PIL umwandeln
+            bmpinfo = hbmp.GetInfo()
+            bmpstr = hbmp.GetBitmapBits(True)
+
+            img = Image.frombuffer(
+                "RGB",
+                (bmpinfo["bmWidth"], bmpinfo["bmHeight"]),
+                bmpstr,
+                "raw",
+                "BGRX",
+                0,
+                1,
+            )
+
+            # Aufräumen – nur Dinge aufrufen, die sicher existieren
+            try:
+                win32gui.DestroyIcon(hicon)
+            except Exception:
+                pass
+
+            try:
+                hdc_mem.DeleteDC()
+            except Exception:
+                pass
+
+            try:
+                hdc.DeleteDC()
+            except Exception:
+                pass
+
+            # hbmp.DeleteObject() NICHT mehr aufrufen
+
+            return img
+
+        except Exception as e:
+            print(f"Icon extraction failed for {exe_path}: {e}")
+            return None
+
+    # Spiele Icon laden (mit Caching)
+    def get_game_icon_image(self, exe_path: str, size=(48, 48)) -> ctk.CTkImage:
+        # 1) Cache-Check
+        if exe_path in self.game_icon_cache:
+            return self.game_icon_cache[exe_path]
+
+        # 2) Versuchen, Icon aus EXE zu laden
+        pil_img = self.load_icon_from_exe(exe_path, size=size)
+
+        # 3) Fallback, wenn das fehlschlägt
+        if pil_img is None:
+            try:
+                fallback_path = resource_path("assets/game_launcher.png")
+                pil_img = Image.open(fallback_path)
+            except Exception as e:
+                print("Fallback-Icon konnte nicht geladen werden:", e)
+                # Als allerletzte Rettung: ein kleines leeres Bild bauen
+                pil_img = Image.new("RGB", size, (80, 80, 80))
+
+        # 4) CTkImage erzeugen – ab hier ist pil_img GARANTIERT gesetzt
+        ctk_img = ctk.CTkImage(
+            light_image=pil_img,
+            dark_image=pil_img,
+            size=size
+        )
+
+        self.game_icon_cache[exe_path] = ctk_img
+        return ctk_img
+    
     def create_games_tab_content(self):
         # Games-Tab: eine Zeile, eine Spalte → komplette Breite für die Liste
         self.games_tab.grid_rowconfigure(0, weight=1)
@@ -610,35 +632,56 @@ class GameLauncherApp(ctk.CTk):
         )
 
     def render_game_buttons(self):
-        if not hasattr(self, "games"):
-            self.games = []
-
-        # Weiter machen
-        for child in self.games_scroll.winfo_children():
-            child.destroy()
+        # Scroll-Frame leeren
+        for widget in self.games_scroll.winfo_children():
+            widget.destroy()
 
         if not self.games:
-            empty_label = ctk.CTkLabel(
+            label = ctk.CTkLabel(
                 self.games_scroll,
-                text="Noch keine Spiele.\nKlick auf 'System'.",
-                justify="left"
+                text="Noch keine Spiele.\nKlick auf 'Manuell Spiel hinzufügen'."
             )
-            empty_label.pack(padx=10, pady=10, anchor="w")
+            label.pack(pady=10)
             return
 
         for game in self.games:
-            btn = ctk.CTkButton(
-                self.games_scroll,
-                text=game["name"],
-                anchor="w",
-                command=lambda g=game: self.launch_game(g)
-            )
-            btn.pack(padx=5, pady=4, fill="x")
+            card = ctk.CTkFrame(self.games_scroll, corner_radius=8)
+            card.pack(fill="x", padx=10, pady=5)
 
-            # Rechtsklick-Menü für den Button
-            btn.bind("<Button-3>", lambda event,
-                     g=game: self.show_game_context_menu(event, g))
+        # Icon aus EXE
+        icon_img = self.get_game_icon_image(game["path"], size=(42, 42))
+        icon_label = ctk.CTkLabel(card, image=icon_img, text="")
+        icon_label.image = icon_img  # wichtig!
+        icon_label.pack(side="left", padx=10, pady=10)
 
+        # Spielname
+        name_label = ctk.CTkLabel(
+            card,
+            text=game["name"],
+            font=ctk.CTkFont(size=15, weight="bold")
+        )
+        name_label.pack(side="left", padx=10)
+
+        # Play-Button
+        play_btn = ctk.CTkButton(
+            card,
+            text="Play",
+            width=70,
+            command=lambda p=game["path"]: self.start_game(p)
+        )
+        play_btn.pack(side="right", padx=10)
+
+        # Remove-Button
+        del_btn = ctk.CTkButton(
+            card,
+            text="X",
+            width=30,
+            fg_color="#aa4444",
+            command=lambda g=game: self.remove_game(g)
+        )
+        del_btn.pack(side="right", padx=5)
+
+        # 🟦 Counter aktualisieren – GANZ WICHTIG
         self.update_games_count_label()
 
     def show_game_context_menu(self, event, game):
@@ -658,6 +701,8 @@ class GameLauncherApp(ctk.CTk):
             self.games = [g for g in self.games if g is not game]
             self.save_games()
             self.render_game_buttons()
+            # 🟦 Counter aktualisieren – GANZ WICHTIG
+            self.update_games_count_label()
 
     def add_game_dialog(self):
         file_path = filedialog.askopenfilename(
