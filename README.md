@@ -9,6 +9,8 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
 <img width="2036" height="1506" alt="Screenshot 2025-12-14 173439" src="https://github.com/user-attachments/assets/6eddfd72-72da-4c94-8a19-8c09d04bf487" />
 
+<img width="1804" height="1247" alt="Screenshot 2025-12-14 232615" src="https://github.com/user-attachments/assets/080050f8-199e-4554-ba14-5ce1e063b1db" />
+
 
 ## ✨ Features
 
