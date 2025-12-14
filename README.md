@@ -1,4 +1,4 @@
-# 🎮 GameLauncher Project – Alpha v0.0.6  
+# 🎮 GameLauncher Project – Alpha v0.0.8  
 Ein moderner, anpassbarer **Game Launcher**, gebaut in Python mit *customtkinter*.  
 Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
@@ -32,11 +32,9 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 ---
 
 ## 🛠 Roadmap (1.0 Release Ziele)
-- Game Cards statt Textliste
-- Game Grid statt Liste
 - Automatische Games Erkennung
 - Spielzeit-Anzeige (Steam API optional)
-- EPIC / EA / Ubisoft / Battle.net Auto-Detection verbessern
+- EPIC / EA / Ubisoft / Battle.net Detection
 - Storage Overview (Diskbar)
 - Besseren Installed Games Counter
 - Settings speichern (Theme, Fenstergröße, Position)
@@ -48,13 +46,12 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 - Splash Screen beim Start
 - Crash Log System
 - Blur/Glass Effect (Windows 11 Style)
-- Rounded Game Icons automatisiert
 - Animierte Buttons (Hover-Effekt)
 
 ### In Arbeit
+- Automatische Games Erkennung
 - Game Cards statt Textliste
 - Game Grid statt Liste
-- Auto-Detect von installierten Games
 
 ### Fertig
 - Auto-Detect von installierten Launchern
