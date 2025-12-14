@@ -1,0 +1,5 @@
+{
+    "chunk_size": 15,
+    "cache_size_mb": 200,
+    "cache_max_files": 2000
+}
