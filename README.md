@@ -4,6 +4,12 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
 ---
 
+## ✨ Pictures
+
+
+<img width="2036" height="1506" alt="Screenshot 2025-12-14 173439" src="https://github.com/user-attachments/assets/6eddfd72-72da-4c94-8a19-8c09d04bf487" />
+
+
 ## ✨ Features
 
 ### 🕹 Game Library
