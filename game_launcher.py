@@ -2,20 +2,22 @@ import os
 import json
 import psutil
 import customtkinter as ctk
-import tkinter as tk
 import winreg
 import sys
-import win32gui
-import win32ui
-import win32con
-import win32api
+import win32gui  # type: ignore
+import win32ui  # type: ignore
+import win32con  # type: ignore
+import win32api  # type: ignore
 import re
-import threading
+import hashlib
+from threading import Thread
 from tkinter import filedialog, messagebox
 from PIL import Image
-from typing import cast
-from threading import Thread
 import hashlib
+try:
+    import requests
+except ImportError:
+    requests = None  # Wird sanft behandelt wenn nicht installiert
 
 GAMES_FILE = "games.json"
 SETTINGS_FILE = "settings.json"
@@ -70,17 +72,26 @@ class GameLauncherApp(ctk.CTk):
         self._steam_import_running = False
         icon_path = resource_path("assets/game_launcher.ico")
         self.iconbitmap(icon_path)
-        # Icon caches
-        self._icon_pil_cache: dict[str, "Image.Image | None"] = {}          # exe_path -> PIL image (or None)
+        # Icon-Caches
+        self._icon_pil_cache: dict[str, "Image.Image | None"] = {}          # exe_path -> PIL Image (oder None)
         self._icon_ctk_cache: dict[tuple[str, int, int], "ctk.CTkImage | None"] = {}  # (exe_path, w, h) -> CTkImage
-        self._fallback_pil_image: "Image.Image | None" = None  # Cached fallback PIL image
+        self._fallback_pil_image: "Image.Image | None" = None  # Gecachtes Fallback PIL Image
         self._fallback_icon_ctk: "ctk.CTkImage | None" = None
         self._ui_image_refs = []  # Verhindert Garbage Collection von CTkImages
-        self._icon_load_inflight: set[str] = set()  # currently loading exe paths
+        self._icon_load_inflight: set[str] = set()  # aktuell ladende exe-Pfade
         self._resize_after_id: str | None = None
         self._is_resizing = False
         self._last_width = 0
         self._last_height = 0
+        
+        # Such- und Sortierstatus
+        self._search_term = ""
+        self._sort_mode = "name"  # name, favorite, date_added
+        self._current_game_detail = None  # Aktuell angezeigte Spieledetails
+        self._is_scrolling = False
+        self._scroll_idle_after_id: str | None = None
+        self._pending_icon_updates: list[tuple[str, tuple[int, int], ctk.CTkLabel]] = []
+        self._hovered_card: ctk.CTkFrame | None = None  # Aktuell gehöverte Karte
 
         # ----- Grundkonfiguration -----
         ctk.set_appearance_mode("dark")       # Startmodus
@@ -118,10 +129,10 @@ class GameLauncherApp(ctk.CTk):
         self.create_header_bar()
         self.create_main_tabs()               # NEU statt left/right panel
         
-        # Bind resize detection to pause expensive operations
+        # Resize-Erkennung binden um teure Operationen zu pausieren
         self.bind("<Configure>", self._detect_resize_start, add="+")
 
-        # Schedule idle icon pre-warm shortly after startup
+        # Icon-Vorwärmung kurz nach Start planen
         try:
             self.after(800, self._start_idle_icon_prewarm)
         except Exception:
@@ -196,7 +207,7 @@ class GameLauncherApp(ctk.CTk):
             if not os.path.exists(exe_path):
                 return None
 
-            # Disk cache: try load cached PNG first
+            # Disk-Cache: Versuche zuerst gecachtes PNG zu laden
             cache_path = self._icon_cache_file(exe_path)
             if cache_path and os.path.exists(cache_path):
                 try:
@@ -269,7 +280,7 @@ class GameLauncherApp(ctk.CTk):
                     1
                 ).convert("RGBA")
 
-                # Save to disk cache for future runs
+                # Auf Disk-Cache für zukünftige Läufe speichern
                 try:
                     if cache_path:
                         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
@@ -287,31 +298,21 @@ class GameLauncherApp(ctk.CTk):
                 win32gui.ReleaseDC(0, hdc_screen)
 
                 # Icon-Handles freigeben
-                for ico in large:
-                    try:
-                        win32gui.DestroyIcon(ico)
-                    except Exception:
-                        pass
-                for ico in small:
+                for ico in large + small:
                     try:
                         win32gui.DestroyIcon(ico)
                     except Exception:
                         pass
 
                 # Bitmaps aus IconInfo freigeben
-                try:
-                    if hbmColor:
-                        win32gui.DeleteObject(hbmColor)
-                except Exception:
-                    pass
-                try:
-                    if hbmMask:
-                        win32gui.DeleteObject(hbmMask)
-                except Exception:
-                    pass
+                for bmp in [hbmColor, hbmMask]:
+                    if bmp:
+                        try:
+                            win32gui.DeleteObject(bmp)
+                        except Exception:
+                            pass
 
-        except Exception as e:
-            print(f"Icon extraction failed for {exe_path}: {e}")
+        except Exception:
             return None
 
     # --- Icon disk cache helpers ---
@@ -338,10 +339,8 @@ class GameLauncherApp(ctk.CTk):
     def invalidate_icon_cache(self, exe_path: str):
         exe_path = os.path.normpath(exe_path)
         self._icon_pil_cache.pop(exe_path, None)
-
-        # alle Größenvarianten entfernen
-        keys_to_delete = [k for k in self._icon_ctk_cache.keys() if k[0] == exe_path]
-        for k in keys_to_delete:
+        # Alle Größenvarianten entfernen
+        for k in [k for k in self._icon_ctk_cache if k[0] == exe_path]:
             self._icon_ctk_cache.pop(k, None)
 
     # Gibt ein Standard-Fallback-Icon als CTkImage zurück
@@ -353,7 +352,7 @@ class GameLauncherApp(ctk.CTk):
         if key in self._icon_ctk_cache and self._icon_ctk_cache[key] is not None:
             return self._icon_ctk_cache[key]  # type: ignore
 
-        # Load fallback PIL image only once
+        # Fallback PIL Image nur einmal laden
         if self._fallback_pil_image is None:
             try:
                 p = resource_path("assets/game_launcher.png")
@@ -381,7 +380,7 @@ class GameLauncherApp(ctk.CTk):
 
         # 2) PIL Cache (Icon-Extraktion nur 1x pro EXE)
         if exe_path not in self._icon_pil_cache:
-            pil_icon = self.extract_icon_pil(exe_path)  # <-- diese Funktion muss existieren
+            pil_icon = self.extract_icon_pil(exe_path)
             self._icon_pil_cache[exe_path] = pil_icon  # kann None sein
 
         pil_icon = self._icon_pil_cache.get(exe_path)
@@ -407,21 +406,148 @@ class GameLauncherApp(ctk.CTk):
         self.left_frame = ctk.CTkFrame(self.games_tab, corner_radius=0)
         self.left_frame.grid(row=0, column=0, sticky="nsew")
 
+        # Header mit Title und Controls
+        header_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
+        header_frame.pack(padx=10, pady=(10, 5), fill="x")
+        
         title_label = ctk.CTkLabel(
-            self.left_frame,
+            header_frame,
             text="Games",
             font=self.font_section
         )
-        title_label.pack(padx=10, pady=(10, 5), anchor="w")
+        title_label.pack(side="left")
+
+        # Suchleiste
+        self.search_entry = ctk.CTkEntry(
+            header_frame,
+            placeholder_text="🔍 Spiele suchen...",
+            width=200
+        )
+        self.search_entry.pack(side="right", padx=(10, 0))
+        self.search_entry.bind("<KeyRelease>", self._on_search_changed)
+
+        # Sortier-Controls
+        sort_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
+        sort_frame.pack(padx=10, pady=(0, 5), fill="x")
+        
+        sort_label = ctk.CTkLabel(sort_frame, text="Sortieren:")
+        sort_label.pack(side="left", padx=(0, 10))
+        
+        self.sort_name_btn = ctk.CTkButton(
+            sort_frame,
+            text="Name",
+            width=80,
+            fg_color="#1f6aa5",  # Aktiv als Standard
+            command=lambda: self._set_sort_mode("name")
+        )
+        self.sort_name_btn.pack(side="left", padx=2)
+        
+        self.sort_fav_btn = ctk.CTkButton(
+            sort_frame,
+            text="⭐ Favoriten",
+            width=100,
+            fg_color=("gray75", "gray25"),  # Inaktiv als Standard
+            command=lambda: self._set_sort_mode("favorite")
+        )
+        self.sort_fav_btn.pack(side="left", padx=2)
+        
+        self.sort_date_btn = ctk.CTkButton(
+            sort_frame,
+            text="Hinzugefügt",
+            width=100,
+            fg_color=("gray75", "gray25"),  # Inaktiv als Standard
+            command=lambda: self._set_sort_mode("date_added")
+        )
+        self.sort_date_btn.pack(side="left", padx=2)
 
         # Scrollbare Liste – keine feste width mehr, damit sie die Breite nutzen kann
-        self.games_scroll = ctk.CTkScrollableFrame(self.left_frame)
-        self.games_scroll.pack(padx=10, pady=(0, 10), fill="both", expand=True)
+        scroll_container = ctk.CTkFrame(self.left_frame, fg_color="transparent")
+        scroll_container.pack(padx=10, pady=(0, 10), fill="both", expand=True)
+        
+        self.games_scroll = ctk.CTkScrollableFrame(scroll_container)
+        self.games_scroll.pack(fill="both", expand=True)
+        
+        # Hole die interne Canvas von CTkScrollableFrame für Scroll-Erkennung
+        self._scroll_canvas = self.games_scroll._parent_canvas
 
+        # Scroll-Overlay um visuelle Artefakte zu verstecken (Scrollbar bleibt sichtbar)
+        self.scroll_overlay = ctk.CTkFrame(
+            scroll_container,
+            fg_color=("#e0e0e0", "#2a2a2a"),
+            corner_radius=8
+        )
+        self.scroll_overlay_label = ctk.CTkLabel(
+            self.scroll_overlay,
+            text="⚡ Scrolling...",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color=("#333333", "#aaaaaa")
+        )
+        self.scroll_overlay_label.pack(expand=True)
+        # Am Anfang versteckt
+        self.scroll_overlay.place_forget()
+
+        # Leite Scroll-Events vom Overlay zur Canvas weiter
+        def _forward_scroll(e):
+            # Erhöhe Scroll-Geschwindigkeit durch Multiplikation des Deltas
+            scroll_amount = int(-1 * (e.delta / 120)) * 6
+            self._scroll_canvas.yview_scroll(scroll_amount, "units")
+            _scroll_started()  # Halte Overlay sichtbar
+            return "break"
+
+        self.scroll_overlay.bind("<MouseWheel>", _forward_scroll)
+        self.scroll_overlay_label.bind("<MouseWheel>", _forward_scroll)
+
+        # Verfolge letzte Scroll-Position um Scrollbar-Drag zu erkennen
+        self._last_scroll_pos = 0.0
+
+        def _check_scroll_position():
+            if hasattr(self, '_scroll_canvas') and self._scroll_canvas.winfo_exists():
+                try:
+                    current_pos = self._scroll_canvas.yview()[0]
+                    if abs(current_pos - self._last_scroll_pos) > 0.001:
+                        self._last_scroll_pos = current_pos
+                        _scroll_started()
+                except Exception:
+                    pass
+            self.after(50, _check_scroll_position)
+
+        # Scroll-Debouncing um visuelle Artefakte während schnellem Scrolling zu vermeiden
+        def _scroll_started(e=None):
+            if not self._is_scrolling:
+                self._is_scrolling = True
+                # Setze Hover-Effekt der aktuell gehöverten Karte zurück
+                if self._hovered_card is not None:
+                    try:
+                        self._hovered_card.configure(border_color="#2a2a2a", border_width=2)
+                    except Exception:
+                        pass
+                    self._hovered_card = None
+                # Zeige Overlay das den Großteil des Scroll-Bereichs abdeckt aber lasse 2% für Scrollbar
+                self.scroll_overlay.place(x=0, y=0, relwidth=0.98, relheight=1)
+                self.scroll_overlay.lift()
+            if self._scroll_idle_after_id:
+                try:
+                    self.after_cancel(self._scroll_idle_after_id)
+                except Exception:
+                    pass
+            self._scroll_idle_after_id = self.after(350, _scroll_stopped)
+
+        def _scroll_stopped():
+            self._is_scrolling = False
+            self._scroll_idle_after_id = None
+            # Verstecke Overlay
+            self.scroll_overlay.place_forget()
+            # Verarbeite ausstehende Updates in einem Batch
+            self.after(10, self._process_pending_icons)
+
+        # Binde an Scroll-Rad auf mehreren Widgets
+        self.games_scroll.bind("<MouseWheel>", _scroll_started, add="+")
+        self._scroll_canvas.bind("<MouseWheel>", _scroll_started, add="+")
+        
+        # Starte Positions-Polling für Scrollbar-Erkennung
+        self.after(100, _check_scroll_position)
+        
         # Fixe Spaltenanzahl einmal konfigurieren (vermeidet wiederholte grid-Konfiguration)
-        self._games_columns = 3
-
-        # Virtualized/progressive rendering state
         self._games_columns = 3
         self._games_chunk_size = self.settings.get("chunk_size", 12)
         self._rendered_games_count = 0
@@ -431,10 +557,49 @@ class GameLauncherApp(ctk.CTk):
 
         add_game_btn = ctk.CTkButton(
             self.left_frame,
-            text="Manuell Spiel hinzufügen",
-            command=self.add_game_dialog
+            text="➕ Manuell Spiel hinzufügen",
+            command=self.add_game_dialog,
+            height=35
         )
         add_game_btn.pack(padx=10, pady=(0, 10), fill="x")
+
+    # Wird aufgerufen wenn sich die Sucheingabe ändert
+    def _on_search_changed(self, event=None):
+        self._search_term = self.search_entry.get().lower()
+        self.render_game_buttons()
+    
+    # Setzt den Sortiermodus und aktualisiert die Darstellung
+    def _set_sort_mode(self, mode: str):
+        self._sort_mode = mode
+        # Aktualisiere Button-Farben um aktive Sortierung anzuzeigen
+        self.sort_name_btn.configure(fg_color=("#1f6aa5" if mode == "name" else ("gray75", "gray25")))
+        self.sort_fav_btn.configure(fg_color=("#1f6aa5" if mode == "favorite" else ("gray75", "gray25")))
+        self.sort_date_btn.configure(fg_color=("#1f6aa5" if mode == "date_added" else ("gray75", "gray25")))
+        self.render_game_buttons()
+    
+    # Gibt die gefilterte und sortierte Spieleliste zurück
+    def _get_filtered_sorted_games(self) -> list[dict]:
+        # Filtere nach Suchbegriff
+        filtered = self.games
+        if self._search_term:
+            filtered = [g for g in filtered if self._search_term in g.get("name", "").lower()]
+        
+        # Sort
+        if self._sort_mode == "name":
+            filtered = sorted(filtered, key=lambda g: g.get("name", "").lower())
+        elif self._sort_mode == "favorite":
+            filtered = sorted(filtered, key=lambda g: (not g.get("favorite", False), g.get("name", "").lower()))
+        elif self._sort_mode == "date_added":
+            # Neueste zuerst (nimmt an dass Spiele ans Ende der Liste hinzugefügt werden)
+            filtered = list(reversed(filtered))
+        
+        return filtered
+    
+    # Togglet den Favoriten-Status eines Spiels
+    def _toggle_favorite(self, game: dict):
+        game["favorite"] = not game.get("favorite", False)
+        self.save_games()
+        self.render_game_buttons()
 
     # Aktualisiert die Anzeige der Spieleanzahl im System-Tab
     def update_games_count_label(self):
@@ -443,13 +608,13 @@ class GameLauncherApp(ctk.CTk):
                 text=f"Installierte Spiele: {len(self.games)}"
             )
 
-    # Aktualisiert die Laufwerksinformationen im System-Tab
+    # Aktualisiert die Laufwerksinformationen im System-Tab mit visuellen Fortschrittsbalken
     def refresh_disk_info(self):
         # Frame leeren
         for child in self.disks_frame.winfo_children():
             child.destroy()
 
-        # Cache partitions call (expensive on some systems)
+        # Cache partitions-Aufruf (teuer auf manchen Systemen)
         try:
             partitions = psutil.disk_partitions(all=False)
         except Exception:
@@ -465,13 +630,43 @@ class GameLauncherApp(ctk.CTk):
                 continue
 
             total_gb = usage.total / (1024 ** 3)
+            used_gb = usage.used / (1024 ** 3)
+            free_gb = usage.free / (1024 ** 3)
             used_percent = usage.percent
 
-            label = ctk.CTkLabel(
-                self.disks_frame,
-                text=f"{part.device} ({part.mountpoint}) – {total_gb:.1f} GB, benutzt: {used_percent:.1f} %"
+            # Container für jeden Drive
+            drive_frame = ctk.CTkFrame(self.disks_frame, corner_radius=8)
+            drive_frame.pack(fill="x", padx=5, pady=5)
+            
+            # Header mit Drive-Info
+            header_label = ctk.CTkLabel(
+                drive_frame,
+                text=f"💾 {part.device} ({part.mountpoint})",
+                font=ctk.CTkFont(size=13, weight="bold")
             )
-            label.pack(anchor="w", padx=5, pady=2)
+            header_label.pack(anchor="w", padx=10, pady=(8, 2))
+            
+            # Progress Bar
+            progress = ctk.CTkProgressBar(drive_frame, width=300)
+            progress.set(used_percent / 100)
+            progress.pack(fill="x", padx=10, pady=5)
+            
+            # Farbkodierung basierend auf Nutzung
+            if used_percent >= 90:
+                progress.configure(progress_color="#ff4444")
+            elif used_percent >= 75:
+                progress.configure(progress_color="#ffaa44")
+            else:
+                progress.configure(progress_color="#44ff44")
+            
+            # Details
+            details_label = ctk.CTkLabel(
+                drive_frame,
+                text=f"Belegt: {used_gb:.1f} GB / {total_gb:.1f} GB ({used_percent:.1f}%) | Frei: {free_gb:.1f} GB",
+                font=ctk.CTkFont(size=11),
+                text_color="#888888"
+            )
+            details_label.pack(anchor="w", padx=10, pady=(0, 8))
 
     # Aktualisiert die Launcher-Informationen im System-Tab
     def refresh_launcher_info(self):
@@ -519,7 +714,7 @@ class GameLauncherApp(ctk.CTk):
     def _steam_import_worker(self):
         try:
             steam_games = self.scan_steam_games()
-            # Deduplicate immediately in worker
+            # Entdupliziere sofort im Worker
             existing_paths = {g.get("path") for g in self.games if g.get("path")}
             new_games = [g for g in steam_games if g.get("path") and g.get("path") not in existing_paths]
             result = ("ok", new_games, None)
@@ -536,7 +731,7 @@ class GameLauncherApp(ctk.CTk):
                 messagebox.showerror("Steam Import", f"Fehler beim Import:\n\n{err}")
                 return
 
-            # Add new games (already deduplicated in worker)
+            # Füge neue Spiele hinzu (bereits im Worker entdupliziert)
             self.games.extend(new_games)
             self.save_games()
             self.render_game_buttons()
@@ -564,7 +759,7 @@ class GameLauncherApp(ctk.CTk):
 
         libraries = self.get_steam_library_paths(steam_path)
         found_games: list[dict] = []
-        # Track already found game roots to avoid duplicates early
+        # Verfolge bereits gefundene Spiel-Roots um früh Duplikate zu vermeiden
         seen_roots: set[str] = set()
 
         for lib in libraries:
@@ -588,7 +783,7 @@ class GameLauncherApp(ctk.CTk):
                 game_root = os.path.join(lib, "steamapps", "common", installdir)
                 game_root_norm = os.path.normpath(game_root).lower()
                 
-                # Skip if we've already processed this game root
+                # Überspringe wenn wir dieses Spiel-Root bereits verarbeitet haben
                 if game_root_norm in seen_roots:
                     continue
                 seen_roots.add(game_root_norm)
@@ -624,28 +819,24 @@ class GameLauncherApp(ctk.CTk):
             return paths
 
         try:
-            content = open(vdf_path, "r", encoding="utf-8", errors="ignore").read()
+            with open(vdf_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
 
             # Findet: "path"  "D:\\SteamLibrary"
-            found = re.findall(r'"path"\s*"([^"]+)"', content)
-            for p in found:
-                p = p.replace("\\\\", "\\")
-                paths.append(os.path.normpath(p))
+            for p in re.findall(r'"path"\s*"([^"]+)"', content):
+                paths.append(os.path.normpath(p.replace("\\\\", "\\")))
 
-        except Exception as e:
-            print("Failed to parse libraryfolders.vdf:", e)
+        except Exception:
+            pass
 
-        # Duplikate entfernen
-        unique = []
-        for p in paths:
-            if p and p not in unique:
-                unique.append(p)
-        return unique
+        # Duplikate entfernen (Reihenfolge beibehalten)
+        return list(dict.fromkeys(p for p in paths if p))
 
     # Parst eine Steam ACF-Manifest-Datei und extrahiert Spiel-Informationen
     def parse_acf_manifest(self, acf_path: str) -> dict:
         try:
-            content = open(acf_path, "r", encoding="utf-8", errors="ignore").read()
+            with open(acf_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
             name = re.search(r'"name"\s*"([^"]+)"', content)
             installdir = re.search(r'"installdir"\s*"([^"]+)"', content)
 
@@ -653,8 +844,7 @@ class GameLauncherApp(ctk.CTk):
                 "name": name.group(1) if name else None,
                 "installdir": installdir.group(1) if installdir else None,
             }
-        except Exception as e:
-            print("Failed to parse ACF:", e)
+        except Exception:
             return {"name": None, "installdir": None}
         
     # Findet die Haupt-EXE-Datei eines Spiels im angegebenen Verzeichnis (mit intelligentem Scoring)
@@ -662,7 +852,7 @@ class GameLauncherApp(ctk.CTk):
         if not os.path.isdir(game_root):
             return None
 
-        # Normalize game name for comparison
+        # Normalisiere Spielenamen für Vergleich
         game_name_clean = re.sub(r'[^a-z0-9]', '', game_name.lower()) if game_name else ""
         folder_name = os.path.basename(game_root).lower()
         folder_clean = re.sub(r'[^a-z0-9]', '', folder_name)
@@ -677,11 +867,11 @@ class GameLauncherApp(ctk.CTk):
         except Exception:
             pass
 
-        # 2) Rekursiv suchen in bin/binaries folders if no good root candidates
+        # 2) Rekursiv suchen in bin/binaries Ordnern wenn keine guten Root-Kandidaten
         if len(candidates) < 3:
             for root, dirs, files in os.walk(game_root):
                 low = root.lower()
-                # Skip common non-game folders
+                # Überspringe häufige Nicht-Spiele-Ordner
                 if any(x in low for x in ["_commonredist", "redist", "redistributable", "vcredist", 
                                           "directx", "dotnet", "installers", "support", "_data"]):
                     continue
@@ -701,7 +891,7 @@ class GameLauncherApp(ctk.CTk):
             n = os.path.basename(p).lower()
             n_clean = re.sub(r'[^a-z0-9]', '', n)
             
-            # Immediate disqualifiers (return negative to sort to bottom)
+            # Sofort disqualifizieren (negative zurückgeben für Sortierung nach unten)
             bad_words = ["unins", "setup", "installer", "install", "crash", "crashreport", 
                         "report", "helper", "support", "redist", "vc_redist", "vcredist",
                         "directx", "dotnet", "handler", "crs-handler", "connectinstaller",
@@ -714,38 +904,38 @@ class GameLauncherApp(ctk.CTk):
             
             points = 10
             
-            # Bonus: exe name matches game name
+            # Bonus: Exe-Name passt zu Spielname
             if game_name_clean and game_name_clean in n_clean:
                 points += 50
             
-            # Bonus: exe name matches folder name
+            # Bonus: Exe-Name passt zu Ordnername
             if folder_clean and len(folder_clean) > 3 and folder_clean in n_clean:
                 points += 40
             
-            # Bonus: in root directory
+            # Bonus: im Root-Verzeichnis
             if os.path.dirname(p) == os.path.normpath(game_root):
                 points += 20
             
-            # Bonus: in bin/binaries folder (common for actual game exe)
+            # Bonus: in bin/binaries Ordner (häufig für echte Spiele-exe)
             parent = os.path.basename(os.path.dirname(p)).lower()
             if parent in ["bin", "binaries", "bin64", "binary"]:
                 points += 15
             
-            # Bonus: has x64/win64 in name (usually main game exe)
+            # Bonus: hat x64/win64 im Namen (normalerweise Haupt-Spiele-exe)
             if any(x in n for x in ["x64", "win64", "64bit"]):
                 points += 5
             
-            # Penalty: deeply nested
+            # Strafe: tief verschachtelt
             depth = p.count(os.sep) - game_root.count(os.sep)
             if depth > 2:
                 points -= (depth - 2) * 5
             
             return points
 
-        # Sort by score (highest first)
+        # Sortiere nach Score (höchster zuerst)
         candidates.sort(key=score, reverse=True)
         
-        # Only return if score is positive (not disqualified)
+        # Nur zurückgeben wenn Score positiv ist (nicht disqualifiziert)
         if candidates and score(candidates[0]) > 0:
             return candidates[0]
         
@@ -826,7 +1016,7 @@ class GameLauncherApp(ctk.CTk):
         )
         self.steam_import_btn.grid(row=6, column=0, sticky="ew", padx=10, pady=(10, 6))
 
-        # --- Remove All Games Button ---
+        # --- Alle Spiele entfernen Button ---
         self.remove_all_btn = ctk.CTkButton(
             self.system_scroll,
             text="Alle Spiele entfernen",
@@ -876,7 +1066,10 @@ class GameLauncherApp(ctk.CTk):
         )
         theme_label.grid(row=1, column=0, sticky="w", padx=10, pady=(0, 5))
 
-        self.theme_var = ctk.StringVar(value="Dark")  # Startwert
+        # Lade gespeichertes Theme
+        saved_theme = self.settings.get("theme", "Dark")
+        self.theme_var = ctk.StringVar(value=saved_theme)
+        ctk.set_appearance_mode(saved_theme)  # Wende gespeichertes Theme an
 
         self.theme_optionmenu = ctk.CTkOptionMenu(
             self.settings_tab,
@@ -895,46 +1088,57 @@ class GameLauncherApp(ctk.CTk):
         perf_label.grid(row=2, column=0, sticky="w", padx=10, pady=(0, 10))
 
         # Chunk Size
-        chunk_label = ctk.CTkLabel(
+        self.chunk_label = ctk.CTkLabel(
             self.settings_tab,
             text=f"Games per Chunk: {self.settings.get('chunk_size', 12)}"
         )
-        chunk_label.grid(row=3, column=0, sticky="w", padx=10, pady=(0, 5))
+        self.chunk_label.grid(row=3, column=0, sticky="w", padx=10, pady=(0, 5))
 
         self.chunk_slider = ctk.CTkSlider(
             self.settings_tab,
             from_=6,
             to=48,
             number_of_steps=14,
-            command=lambda v: self._on_chunk_size_change(int(v), chunk_label)
+            command=lambda v: self._on_chunk_size_change_temp(int(v))
         )
         self.chunk_slider.set(self.settings.get("chunk_size", 12))
         self.chunk_slider.grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 10))
 
-        # Cache Size
-        cache_label = ctk.CTkLabel(
+        # Cache-Größe
+        self.cache_label = ctk.CTkLabel(
             self.settings_tab,
             text=f"Icon Cache Size: {self.settings.get('cache_size_mb', 200)} MB"
         )
-        cache_label.grid(row=5, column=0, sticky="w", padx=10, pady=(0, 5))
+        self.cache_label.grid(row=5, column=0, sticky="w", padx=10, pady=(0, 5))
 
         self.cache_slider = ctk.CTkSlider(
             self.settings_tab,
             from_=50,
             to=500,
             number_of_steps=18,
-            command=lambda v: self._on_cache_size_change(int(v), cache_label)
+            command=lambda v: self._on_cache_size_change_temp(int(v))
         )
         self.cache_slider.set(self.settings.get("cache_size_mb", 200))
         self.cache_slider.grid(row=6, column=0, sticky="ew", padx=10, pady=(0, 10))
 
-        # Clear Cache Button
+        # Speichern-Button
+        save_settings_btn = ctk.CTkButton(
+            self.settings_tab,
+            text="💾 Einstellungen speichern",
+            command=self._save_all_settings,
+            height=35,
+            fg_color="#2d8a2d",
+            hover_color="#246624"
+        )
+        save_settings_btn.grid(row=7, column=0, sticky="ew", padx=10, pady=(10, 10))
+
+        # Cache löschen Button
         clear_cache_btn = ctk.CTkButton(
             self.settings_tab,
             text="Clear Icon Cache",
             command=self._clear_icon_cache
         )
-        clear_cache_btn.grid(row=7, column=0, sticky="w", padx=10, pady=(0, 10))
+        clear_cache_btn.grid(row=8, column=0, sticky="w", padx=10, pady=(0, 10))
 
     # --------------------------
     # About-Tab mit App-Informationen
@@ -981,7 +1185,7 @@ class GameLauncherApp(ctk.CTk):
         # Version
         version_label = ctk.CTkLabel(
             about_container,
-            text="Version 1.0.0 Alpha",
+            text="Version 0.0.9.1 - Beta",
             font=ctk.CTkFont(size=14),
             text_color="#888888"
         )
@@ -1061,7 +1265,7 @@ class GameLauncherApp(ctk.CTk):
         # Copyright
         copyright_label = ctk.CTkLabel(
             about_container,
-            text="© 2024-2025 Alpha Game Launcher. Alle Rechte vorbehalten.",
+            text="© 2025-2026 Alpha Game Launcher. Alle Rechte vorbehalten.",
             font=ctk.CTkFont(size=10),
             text_color="#666666"
         )
@@ -1071,19 +1275,30 @@ class GameLauncherApp(ctk.CTk):
     # --------------------------
     # Settings handlers
     # --------------------------
-    # Wird aufgerufen wenn die Chunk-Größe im Slider geändert wird
-    def _on_chunk_size_change(self, value: int, label: ctk.CTkLabel):
-        self.settings["chunk_size"] = value
-        self._games_chunk_size = value
-        label.configure(text=f"Games per Chunk: {value}")
-        self.save_settings()
+    # Wird aufgerufen wenn die Chunk-Größe im Slider geändert wird (nur Label-Update, kein Speichern)
+    def _on_chunk_size_change_temp(self, value: int):
+        self.chunk_label.configure(text=f"Games per Chunk: {value}")
 
-    # Wird aufgerufen wenn die Cache-Größe im Slider geändert wird
-    def _on_cache_size_change(self, value: int, label: ctk.CTkLabel):
-        self.settings["cache_size_mb"] = value
-        label.configure(text=f"Icon Cache Size: {value} MB")
+    # Wird aufgerufen wenn die Cache-Größe im Slider geändert wird (nur Label-Update, kein Speichern)
+    def _on_cache_size_change_temp(self, value: int):
+        self.cache_label.configure(text=f"Icon Cache Size: {value} MB")
+    
+    # Speichert alle Einstellungen auf einmal (wird von Save-Button aufgerufen)
+    def _save_all_settings(self):
+        # Speichere Theme
+        self.settings["theme"] = self.theme_var.get()
+        
+        # Speichere Performance-Einstellungen
+        self.settings["chunk_size"] = int(self.chunk_slider.get())
+        self.settings["cache_size_mb"] = int(self.cache_slider.get())
+        
+        # Wende Chunk-Größe sofort an
+        self._games_chunk_size = self.settings["chunk_size"]
+        
+        # Speichere in Datei
         self.save_settings()
-        # Note: Pruning happens on next app start to avoid thread issues
+        
+        messagebox.showinfo("✅ Gespeichert", "Einstellungen wurden erfolgreich gespeichert!")
 
     # Löscht den gesamten Icon-Cache (Festplatte und Speicher)
     def _clear_icon_cache(self):
@@ -1097,7 +1312,7 @@ class GameLauncherApp(ctk.CTk):
                             os.remove(path)
                         except Exception:
                             pass
-                # Clear memory caches too
+                # Lösche auch Speicher-Caches
                 self._icon_pil_cache.clear()
                 self._icon_ctk_cache.clear()
                 self.after(0, lambda: messagebox.showinfo(
@@ -1120,8 +1335,7 @@ class GameLauncherApp(ctk.CTk):
             try:
                 with open(GAMES_FILE, "r", encoding="utf-8") as f:
                     self.games = json.load(f)
-            except Exception as e:
-                print(f"Fehler beim Laden von {GAMES_FILE}: {e}")
+            except Exception:
                 self.games = []
         else:
             self.games = []
@@ -1131,8 +1345,8 @@ class GameLauncherApp(ctk.CTk):
         try:
             with open(GAMES_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.games, f, indent=4, ensure_ascii=False)
-        except Exception as e:
-            print(f"Fehler beim Speichern von {GAMES_FILE}: {e}")
+        except Exception:
+            pass
 
     # Lädt die Einstellungen aus der settings.json Datei
     def load_settings(self) -> dict:
@@ -1140,8 +1354,8 @@ class GameLauncherApp(ctk.CTk):
             try:
                 with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                     return json.load(f)
-            except Exception as e:
-                print(f"Fehler beim Laden von {SETTINGS_FILE}: {e}")
+            except Exception:
+                pass
         return {"chunk_size": 12, "cache_size_mb": 200, "cache_max_files": 2000}
 
     # Speichert die Einstellungen in die settings.json Datei
@@ -1149,15 +1363,15 @@ class GameLauncherApp(ctk.CTk):
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.settings, f, indent=4, ensure_ascii=False)
-        except Exception as e:
-            print(f"Fehler beim Speichern von {SETTINGS_FILE}: {e}")
+        except Exception:
+            pass
 
     # --------------------------
     # Functions für Games-Tab
     # --------------------------
     # Rendert die Spiele-Karten in der Games-Tab-Ansicht (progressiv in Chunks)
     def render_game_buttons(self):
-        # Skip rendering if resizing for better performance
+        # Überspringe Rendering wenn Resize für bessere Performance
         if getattr(self, "_is_resizing", False):
             return
         
@@ -1173,22 +1387,26 @@ class GameLauncherApp(ctk.CTk):
         for col in range(columns):
             self.games_scroll.grid_columnconfigure(col, weight=1, uniform="games")
 
-        if not self.games:
+        # Hole gefilterte und sortierte Spiele
+        self._display_games = self._get_filtered_sorted_games()
+
+        if not self._display_games:
             # Hinweis-Label über die gesamte Breite
+            msg = "Keine Spiele gefunden." if self._search_term else "Noch keine Spiele.\nKlick auf '➕ Manuell Spiel hinzufügen' oder \ngehe auf 'System -> Bibliothek importieren'."
             label = ctk.CTkLabel(
                 self.games_scroll,
-                text="Noch keine Spiele.\nKlick auf 'Manuell Spiel hinzufügen' oder \ngehe auf 'System -> Bibliothek importieren'.",
+                text=msg,
             )
             label.grid(row=0, column=0, columnspan=columns, pady=10, padx=10, sticky="nsew")
             # Sicherstellen, dass evtl. Poller gestoppt ist
             self._cancel_games_scroll_poll()
             return
 
-        # Reset progressive rendering counters
+        # Setze progressive Rendering-Zähler zurück
         self._rendered_games_count = 0
-        # Render first chunk immediately for fast initial paint
+        # Rendere ersten Chunk sofort für schnellen initialen Paint
         self._render_next_game_chunk()
-        # Start polling scroll to auto-load further chunks
+        # Starte Scroll-Polling um weitere Chunks automatisch zu laden
         self._setup_games_scroll_poll()
 
         # Counter aktualisieren
@@ -1197,11 +1415,11 @@ class GameLauncherApp(ctk.CTk):
     # Entfernt ein einzelnes Spiel aus der Liste nach Bestätigung
     def remove_game(self, game):
         if messagebox.askyesno("Spiel entfernen", f"'{game['name']}' wirklich löschen?"):
-            # Clear icon cache (memory and disk)
+            # Lösche Icon-Cache (Speicher und Festplatte)
             if game.get("path"):
                 exe_path = os.path.normpath(game["path"])
                 self.invalidate_icon_cache(exe_path)
-                # Delete disk cache file
+                # Lösche Festplatten-Cache-Datei
                 try:
                     cache_file = self._icon_cache_file(exe_path)
                     if os.path.exists(cache_file):
@@ -1224,13 +1442,13 @@ class GameLauncherApp(ctk.CTk):
             "Alle Spiele entfernen",
             f"Möchten Sie wirklich alle {len(self.games)} Spiele entfernen?\n\nDiese Aktion kann nicht rückgängig gemacht werden."
         ):
-            # Clear icon caches for all games
+            # Lösche Icon-Caches für alle Spiele
             for game in self.games:
                 if game.get("path"):
                     exe_path = os.path.normpath(game["path"])
-                    # Clear memory cache
+                    # Lösche Speicher-Cache
                     self.invalidate_icon_cache(exe_path)
-                    # Clear disk cache file
+                    # Lösche Festplatten-Cache-Datei
                     try:
                         cache_file = self._icon_cache_file(exe_path)
                         if os.path.exists(cache_file):
@@ -1243,6 +1461,318 @@ class GameLauncherApp(ctk.CTk):
             self.render_game_buttons()
             self.update_games_count_label()
             messagebox.showinfo("Erfolgreich", "Alle Spiele und deren Icon-Cache wurden entfernt.")
+
+    # Zeigt detaillierte Informationen über ein Spiel
+    def _show_game_detail(self, game: dict):
+        self._current_game_detail = game
+        
+        # Verstecke Spieleliste, zeige Detail-Ansicht
+        for widget in self.left_frame.winfo_children():
+            widget.pack_forget()
+        
+        # Erstelle Detail-Ansicht
+        detail_scroll = ctk.CTkScrollableFrame(self.left_frame)
+        detail_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Zurück-Button oben
+        back_btn = ctk.CTkButton(
+            detail_scroll,
+            text="← Zurück zur Liste",
+            command=self._hide_game_detail,
+            width=150,
+            height=35
+        )
+        back_btn.pack(anchor="w", pady=(0, 15))
+        
+        # Header mit Icon und Titel
+        header_frame = ctk.CTkFrame(detail_scroll, fg_color="transparent")
+        header_frame.pack(fill="x", pady=(0, 20))
+        
+        # Großes Icon
+        icon_label = ctk.CTkLabel(header_frame, text="")
+        icon_label.pack(side="left", padx=(0, 20))
+        self._set_icon_async(game.get("path"), (128, 128), icon_label)
+        
+        # Titel und Basis-Info
+        title_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        title_frame.pack(side="left", fill="both", expand=True)
+        
+        title_label = ctk.CTkLabel(
+            title_frame,
+            text=game.get("name", "Unknown"),
+            font=ctk.CTkFont(size=24, weight="bold")
+        )
+        title_label.pack(anchor="w")
+        
+        # Source label
+        source_label = ctk.CTkLabel(
+            title_frame,
+            text=f"📚 Quelle: {game.get('source', 'Manuell')}",
+            font=ctk.CTkFont(size=12),
+            text_color="#888888"
+        )
+        source_label.pack(anchor="w", pady=(5, 0))
+        
+        # Play-Button im Header
+        play_btn = ctk.CTkButton(
+            header_frame,
+            text="▶ Spiel starten",
+            command=lambda: self.launch_game(game),
+            height=40,
+            width=150,
+            fg_color="#2d8a2d",
+            hover_color="#246624",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        play_btn.pack(side="right", padx=(20, 0))
+        
+        # Loading indicator
+        loading_label = ctk.CTkLabel(
+            detail_scroll,
+            text="⏳ Lade Spiel-Informationen...",
+            font=ctk.CTkFont(size=13),
+            text_color="#888888"
+        )
+        loading_label.pack(pady=20)
+        
+        # Hole Spiel-Infos von API im Hintergrund
+        def fetch_info():
+            info = self._fetch_game_info(game.get("name", ""))
+            self.after(0, lambda: self._display_game_info(detail_scroll, loading_label, info))
+        
+        Thread(target=fetch_info, daemon=True).start()
+    
+    # Versteckt die Detail-Ansicht und zeigt wieder die Spieleliste
+    def _hide_game_detail(self):
+        self._current_game_detail = None
+        
+        # Lösche Detail-Ansicht
+        for widget in self.left_frame.winfo_children():
+            widget.destroy()
+        
+        # Erstelle Spiele-Tab-Inhalt neu
+        self.create_games_tab_content()
+    
+    # Holt Spiel-Informationen von der RAWG API
+    def _fetch_game_info(self, game_name: str) -> dict:
+        if not requests:
+            return {"error": "requests library not installed"}
+        
+        try:
+            # Bereinige Spielnamen für bessere Suchergebnisse
+            search_name = game_name
+            
+            # Füge Leerzeichen vor Zahlen hinzu wenn fehlend (helldivers2 -> helldivers 2)
+            search_name = re.sub(r'([a-z])(\d)', r'\1 \2', search_name, flags=re.IGNORECASE)
+            
+            # Entferne häufige Suffixe die Suche stören könnten
+            for suffix in [" Enhanced", " Remastered", " Edition", " GOTY", " Complete", " Definitive"]:
+                if suffix.lower() in search_name.lower():
+                    search_name = search_name.replace(suffix, "")
+            
+            # Probiere mehrere Suchversuche mit verschiedenen Variationen
+            search_attempts = [
+                search_name.strip(),
+                search_name.strip().replace("_", " ").replace("-", " "),
+                search_name.strip().title(),  # Großschreibe erste Buchstaben
+            ]
+            
+            for attempt in search_attempts:
+                # Nutze RAWG API mit Key für bessere Ergebnisse
+                url = "https://api.rawg.io/api/games"
+                params = {
+                    "key": "746297b2a6ad4fd9a1e59c34598c7b34",
+                    "search": attempt,
+                    "page_size": 5,  # Hole mehr Ergebnisse für bessere Übereinstimmung
+                }
+                
+                response = requests.get(url, params=params, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("results") and len(data["results"]) > 0:
+                        # Finde beste Übereinstimmung (erstes Ergebnis ist normalerweise das Beste)
+                        game_data = data["results"][0]
+                        
+                        # Hole detaillierte Infos
+                        game_id = game_data.get("id")
+                        detail_url = f"https://api.rawg.io/api/games/{game_id}"
+                        detail_params = {"key": "746297b2a6ad4fd9a1e59c34598c7b34"}
+                        detail_response = requests.get(detail_url, params=detail_params, timeout=10)
+                        
+                        if detail_response.status_code == 200:
+                            detailed_data = detail_response.json()
+                            return {
+                                "name": detailed_data.get("name", game_name),
+                                "released": detailed_data.get("released", "Unbekannt"),
+                                "developers": [d.get("name") for d in detailed_data.get("developers", [])],
+                                "publishers": [p.get("name") for p in detailed_data.get("publishers", [])],
+                                "description": detailed_data.get("description_raw", ""),
+                                "playtime": detailed_data.get("playtime", 0),
+                                "rating": detailed_data.get("rating", 0),
+                                "platforms": [p.get("platform", {}).get("name") for p in detailed_data.get("platforms", [])],
+                                "genres": [g.get("name") for g in detailed_data.get("genres", [])],
+                                "metacritic": detailed_data.get("metacritic"),
+                            }
+                        
+                        # Fallback zu Basisdaten falls detaillierter Abruf fehlschlägt
+                        return {
+                            "name": game_data.get("name", game_name),
+                            "released": game_data.get("released", "Unbekannt"),
+                            "rating": game_data.get("rating", 0),
+                            "playtime": game_data.get("playtime", 0),
+                            "genres": [g.get("name") for g in game_data.get("genres", [])],
+                        }
+            
+            # Falls nach allen Versuchen keine Ergebnisse gefunden
+            return {"error": f"Game '{game_name}' not found in database"}
+        except requests.exceptions.Timeout:
+            return {"error": "Request timed out"}
+        except requests.exceptions.RequestException as e:
+            return {"error": f"Network error: {str(e)}"}
+        except Exception as e:
+            return {"error": f"Failed to fetch info: {str(e)}"}
+    
+    # Zeigt die abgerufenen Spiel-Informationen an
+    def _display_game_info(self, parent: ctk.CTkScrollableFrame, loading_label: ctk.CTkLabel, info: dict):
+        # Entferne Lade-Label
+        loading_label.destroy()
+        
+        if info.get("error"):
+            error_label = ctk.CTkLabel(
+                parent,
+                text=f"⚠️ {info['error']}\n\nSpiel-Informationen konnten nicht geladen werden.",
+                font=ctk.CTkFont(size=13),
+                text_color="#ff8888"
+            )
+            error_label.pack(pady=20)
+            return
+        
+        # Info sections
+        sections = [
+            ("📅 Veröffentlichungsdatum", info.get("released", "Unbekannt")),
+            ("👨‍💻 Entwickler", ", ".join(info.get("developers", [])) or "Unbekannt"),
+            ("🏭 Publisher", ", ".join(info.get("publishers", [])) or "Unbekannt"),
+            ("🎮 Genres", ", ".join(info.get("genres", [])) or "Unbekannt"),
+            ("💻 Plattformen", ", ".join(info.get("platforms", [])[:5]) or "Unbekannt"),
+        ]
+        
+        for title, value in sections:
+            if value and value != "Unbekannt":
+                section_frame = ctk.CTkFrame(parent, corner_radius=8)
+                section_frame.pack(fill="x", pady=5)
+                
+                title_label = ctk.CTkLabel(
+                    section_frame,
+                    text=title,
+                    font=ctk.CTkFont(size=13, weight="bold")
+                )
+                title_label.pack(anchor="w", padx=15, pady=(10, 2))
+                
+                value_label = ctk.CTkLabel(
+                    section_frame,
+                    text=value,
+                    font=ctk.CTkFont(size=12),
+                    wraplength=800,
+                    justify="left"
+                )
+                value_label.pack(anchor="w", padx=15, pady=(0, 10))
+        
+        # Bewertung und Spielzeit
+        stats_frame = ctk.CTkFrame(parent, corner_radius=8)
+        stats_frame.pack(fill="x", pady=10)
+        
+        stats_inner = ctk.CTkFrame(stats_frame, fg_color="transparent")
+        stats_inner.pack(fill="x", padx=15, pady=10)
+        
+        # Rating
+        if info.get("rating"):
+            rating_frame = ctk.CTkFrame(stats_inner, fg_color="transparent")
+            rating_frame.pack(side="left", padx=(0, 20))
+            
+            rating_label = ctk.CTkLabel(
+                rating_frame,
+                text="⭐ Bewertung",
+                font=ctk.CTkFont(size=12, weight="bold")
+            )
+            rating_label.pack()
+            
+            rating_value = ctk.CTkLabel(
+                rating_frame,
+                text=f"{info['rating']:.1f} / 5.0",
+                font=ctk.CTkFont(size=16, weight="bold"),
+                text_color="#ffaa00"
+            )
+            rating_value.pack()
+        
+        # Playtime
+        if info.get("playtime"):
+            playtime_frame = ctk.CTkFrame(stats_inner, fg_color="transparent")
+            playtime_frame.pack(side="left", padx=(0, 20))
+            
+            playtime_label = ctk.CTkLabel(
+                playtime_frame,
+                text="⏱️ Durchschn. Spielzeit",
+                font=ctk.CTkFont(size=12, weight="bold")
+            )
+            playtime_label.pack()
+            
+            playtime_value = ctk.CTkLabel(
+                playtime_frame,
+                text=f"~{info['playtime']} Stunden",
+                font=ctk.CTkFont(size=16, weight="bold"),
+                text_color="#44aaff"
+            )
+            playtime_value.pack()
+        
+        # Metacritic score
+        if info.get("metacritic"):
+            metacritic_frame = ctk.CTkFrame(stats_inner, fg_color="transparent")
+            metacritic_frame.pack(side="left")
+            
+            metacritic_label = ctk.CTkLabel(
+                metacritic_frame,
+                text="🎯 Metacritic",
+                font=ctk.CTkFont(size=12, weight="bold")
+            )
+            metacritic_label.pack()
+            
+            score = info['metacritic']
+            color = "#66cc33" if score >= 75 else "#ffcc33" if score >= 50 else "#ff6666"
+            
+            metacritic_value = ctk.CTkLabel(
+                metacritic_frame,
+                text=str(score),
+                font=ctk.CTkFont(size=16, weight="bold"),
+                text_color=color
+            )
+            metacritic_value.pack()
+        
+        # Description
+        if info.get("description"):
+            desc_frame = ctk.CTkFrame(parent, corner_radius=8)
+            desc_frame.pack(fill="both", expand=True, pady=10)
+            
+            desc_title = ctk.CTkLabel(
+                desc_frame,
+                text="📝 Beschreibung",
+                font=ctk.CTkFont(size=13, weight="bold")
+            )
+            desc_title.pack(anchor="w", padx=15, pady=(10, 5))
+            
+            # Limit description length
+            desc_text = info["description"]
+            if len(desc_text) > 800:
+                desc_text = desc_text[:800] + "..."
+            
+            desc_label = ctk.CTkLabel(
+                desc_frame,
+                text=desc_text,
+                font=ctk.CTkFont(size=12),
+                wraplength=900,
+                justify="left"
+            )
+            desc_label.pack(anchor="w", padx=15, pady=(0, 15))
 
     # Öffnet einen Dialog zum manuellen Hinzufügen eines Spiels
     def add_game_dialog(self):
@@ -1268,14 +1798,14 @@ class GameLauncherApp(ctk.CTk):
             return
 
         try:
-            os.startfile(path)   # Windows only
+            os.startfile(path)   # Nur Windows
         except Exception as e:
             messagebox.showerror("Fehler beim Starten", str(e))
 
     # Lädt ein Icon asynchron im Hintergrund ohne die UI zu blockieren
     def _set_icon_async(self, exe_path: str | None, size: tuple[int, int], label: ctk.CTkLabel):
-        # Skip während Resize für bessere Performance
-        if self._is_resizing:
+        # Skip während Resize oder Scrolling für bessere Performance
+        if self._is_resizing or self._is_scrolling:
             return
         
         # Sofort Fallback setzen
@@ -1310,8 +1840,8 @@ class GameLauncherApp(ctk.CTk):
                     pil_icon = self.extract_icon_pil(exe_path)
                     self._icon_pil_cache[exe_path] = pil_icon
             finally:
-                # UI-Update im Main-Thread anfordern (skip if resizing for better performance)
-                if not self._is_resizing:
+                # UI-Update im Main-Thread anfordern (überspringen falls Resize oder Scroll)
+                if not self._is_resizing and not self._is_scrolling:
                     self.after(0, lambda: self._on_icon_ready(exe_path, size, label))
                 else:
                     self._icon_load_inflight.discard(exe_path)
@@ -1325,65 +1855,166 @@ class GameLauncherApp(ctk.CTk):
         self._icon_load_inflight.discard(exe_path)
         # Erzeuge (oder hole) CTkImage jetzt im Main-Thread
         img = self.get_game_icon_image(exe_path, size)
+        if self._is_scrolling:
+            # Warteschlangen-Update bis Scroll stoppt um Artefakte zu vermeiden
+            self._pending_icon_updates.append((exe_path, size, label))
+            return
         if label.winfo_exists():
             label.configure(image=img)
             self._ui_image_refs.append(img)
 
+    def _process_pending_icons(self):
+        pending = list(self._pending_icon_updates)
+        self._pending_icon_updates.clear()
+        for exe_path, size, label in pending:
+            if not label.winfo_exists():
+                continue
+            img = self.get_game_icon_image(exe_path, size)
+            label.configure(image=img)
+            self._ui_image_refs.append(img)
+
     # --- Progressive rendering helpers ---
-    # Erstellt eine einzelne Spiele-Karte im Grid-Layout
+    # Erstellt eine einzelne Spiele-Karte im Grid-Layout (modernized)
     def _create_game_card(self, parent: ctk.CTkScrollableFrame, index: int, game: dict):
         columns = getattr(self, "_games_columns", 3)
         row, col = divmod(index, columns)
 
-        card = ctk.CTkFrame(parent, corner_radius=0)
+        # Hauptkarten-Frame - feste Größe um Layout-Verschiebungen zu verhindern
+        card = ctk.CTkFrame(parent, corner_radius=12, border_width=2, border_color="#2a2a2a", cursor="hand2")
         card.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
+        card.configure(width=260, height=240)
+        card.grid_propagate(False)
+        card.pack_propagate(False)
 
-        icon_label = ctk.CTkLabel(card, text="")
-        icon_label.pack(side="top", pady=(8, 4))
-        self._set_icon_async(game.get("path"), (56, 56), icon_label)
+        # Make entire card clickable
+        def show_detail(e=None):
+            self._show_game_detail(game)
+        
+        def on_enter(e=None):
+            if not self._is_scrolling:
+                # Setze vorherige Karte zurück falls vorhanden
+                if self._hovered_card is not None and self._hovered_card != card:
+                    try:
+                        self._hovered_card.configure(border_color="#2a2a2a", border_width=2)
+                    except Exception:
+                        pass
+                self._hovered_card = card
+                card.configure(border_color="#4a8cff", border_width=3)
+        
+        def on_leave(e=None):
+            if self._is_scrolling:
+                return
+            # Ignoriere Leave-Events wenn Maus noch innerhalb der Karte ist (z.B. über Kind-Elementen)
+            try:
+                x = card.winfo_pointerx() - card.winfo_rootx()
+                y = card.winfo_pointery() - card.winfo_rooty()
+                if 0 <= x < card.winfo_width() and 0 <= y < card.winfo_height():
+                    return
+            except Exception:
+                pass
+
+            card.configure(border_color="#2a2a2a", border_width=2)
+            if self._hovered_card == card:
+                self._hovered_card = None
+
+        # An Karte binden
+        card.bind("<Enter>", on_enter)
+        card.bind("<Leave>", on_leave)
+        card.bind("<Button-1>", show_detail)
+
+        # Favoriten-Stern-Button (oben rechts)
+        is_fav = game.get("favorite", False)
+        fav_btn = ctk.CTkButton(
+            card,
+            text="⭐" if is_fav else "☆",
+            width=30,
+            height=30,
+            fg_color="transparent",
+            hover_color="#3a3a3a",
+            command=lambda g=game: self._toggle_favorite(g),
+            font=ctk.CTkFont(size=16)
+        )
+        fav_btn.place(relx=0.95, rely=0.05, anchor="ne")
+        fav_btn.bind("<Button-1>", lambda e: "break", add="+")
+
+        # Normal card content
+        icon_label = ctk.CTkLabel(card, text="", cursor="hand2", width=80, height=80)
+        icon_label.pack(side="top", pady=(12, 6))
+        icon_label.pack_propagate(False)
+        icon_label.bind("<Button-1>", show_detail)
+        # setze sofortigen Fallback um visuelle Lücken bei schnellem Scroll zu vermeiden
+        fallback_img = self.get_fallback_icon((64, 64))
+        icon_label.configure(image=fallback_img)
+        self._ui_image_refs.append(fallback_img)
+        self._set_icon_async(game.get("path"), (64, 64), icon_label)
 
         name_label = ctk.CTkLabel(
             card,
             text=game.get("name", "Unknown"),
-            font=self.font_card_title,
+            font=ctk.CTkFont(size=14, weight="bold"),
             wraplength=150,
+            cursor="hand2",
+            height=40
         )
-        name_label.pack(side="top", padx=8, pady=(0, 4))
+        name_label.pack(side="top", padx=8, pady=(0, 8))
+        name_label.bind("<Button-1>", show_detail)
+
+        # Info availability indicator
+        info_available = bool(game.get("name")) and requests is not None
+        if info_available:
+            info_label = ctk.CTkLabel(
+                card,
+                text="ℹ Infos verfügbar",
+                font=ctk.CTkFont(size=12, weight="bold"),
+                text_color="#7db4ff"
+            )
+            info_label.pack(side="top", pady=(0, 6))
+            info_label.bind("<Button-1>", show_detail)
 
         button_frame = ctk.CTkFrame(card, fg_color="transparent")
-        button_frame.pack(side="top", pady=(0, 8))
+        button_frame.pack(side="top", pady=(0, 10))
 
         play_btn = ctk.CTkButton(
             button_frame,
-            text="Play",
-            width=70,
+            text="▶ Play",
+            width=80,
+            height=32,
+            corner_radius=8,
+            fg_color="#2d8a2d",
+            hover_color="#246624",
             command=lambda g=game: self.launch_game(g)
         )
         play_btn.pack(side="left", padx=4)
+        play_btn.bind("<Button-1>", lambda e: "break", add="+")
 
         del_btn = ctk.CTkButton(
             button_frame,
-            text="X",
-            width=30,
+            text="🗑",
+            width=35,
+            height=32,
+            corner_radius=8,
             fg_color="#aa4444",
             hover_color="#883333",
+            font=ctk.CTkFont(size=14),
             command=lambda g=game: self.remove_game(g)
         )
         del_btn.pack(side="left", padx=4)
+        del_btn.bind("<Button-1>", lambda e: "break", add="+")
 
     # Rendert den nächsten Chunk an Spiele-Karten
     def _render_next_game_chunk(self):
-        # Skip rendering during resize for better performance
+        # Überspringe Rendering während Resize für bessere Performance
         if self._is_resizing:
             return
-        if not self.games:
+        display_games = getattr(self, "_display_games", [])
+        if not display_games:
             return
         start = self._rendered_games_count
-        end = min(start + getattr(self, "_games_chunk_size", 12), len(self.games))
+        end = min(start + getattr(self, "_games_chunk_size", 12), len(display_games))
         for idx in range(start, end):
-            self._create_game_card(self.games_scroll, idx, self.games[idx])
+            self._create_game_card(self.games_scroll, idx, display_games[idx])
         self._rendered_games_count = end
-        # Trigger idle pre-warm when the first chunk is rendered
+        # Löse Idle-Vorwärmung aus wenn erster Chunk gerendert wurde
         if start == 0:
             try:
                 self.after(500, self._start_idle_icon_prewarm)
@@ -1393,32 +2024,33 @@ class GameLauncherApp(ctk.CTk):
     # Startet den Polling-Loop für automatisches Nachladen beim Scrollen
     def _setup_games_scroll_poll(self):
         self._cancel_games_scroll_poll()
-        # Periodically check if we are near the bottom of the scroll and load more
+        # Prüfe periodisch ob wir nahe am Ende des Scrolls sind und lade mehr
         def poll():
             try:
-                # Skip expensive checks during resize
+                # Überspringe aufwendige Prüfungen während Resize
                 if not self._is_resizing:
                     canvas = getattr(self.games_scroll, "_parent_canvas", None)
                     if canvas and hasattr(canvas, "yview"):
                         y1, y2 = canvas.yview()
-                        # When near bottom, render next chunk
-                        if y2 > 0.96 and self._rendered_games_count < len(self.games):
+                        display_games = getattr(self, "_display_games", [])
+                        # Wenn nahe am Ende, rendere nächsten Chunk
+                        if y2 > 0.96 and self._rendered_games_count < len(display_games):
                             self._render_next_game_chunk()
-                            # Use shorter interval when actively loading
+                            # Nutze kürzeres Intervall wenn aktiv geladen wird
                             next_delay = 150
                         else:
-                            # Use longer interval when idle
+                            # Nutze längeres Intervall wenn untätig
                             next_delay = 300
                     else:
                         next_delay = 300
                 else:
-                    next_delay = 400  # Even longer during resize
+                    next_delay = 400  # Noch länger während Resize
                     
-                # Keep polling while the widget exists
+                # Polling fortsetzen solange das Widget existiert
                 if self.games_scroll.winfo_exists():
                     self._scroll_poll_after_id = self.after(next_delay, poll)
             except Exception:
-                # Fail-safe: stop polling on unexpected errors
+                # Fail-Safe: Stoppe Polling bei unerwarteten Fehlern
                 self._scroll_poll_after_id = None
         self._scroll_poll_after_id = self.after(200, poll)
 
@@ -1434,14 +2066,14 @@ class GameLauncherApp(ctk.CTk):
     # --- Resize optimization: pause expensive operations during resize ---
     # Erkennt den Start einer Fenster-Größenänderung
     def _detect_resize_start(self, event):
-        # Only track main window resize
+        # Nur Hauptfenster-Resize verfolgen
         if event.widget != self:
             return
         
         curr_w = event.width
         curr_h = event.height
         
-        # Check if size actually changed
+        # Prüfe ob Größe tatsächlich geändert wurde
         if curr_w != self._last_width or curr_h != self._last_height:
             if not self._is_resizing:
                 self._is_resizing = True
@@ -1449,37 +2081,37 @@ class GameLauncherApp(ctk.CTk):
             self._last_width = curr_w
             self._last_height = curr_h
 
-            # Cancel any pending resize-end detection
+            # Brich jede ausstehende Resize-Ende-Erkennung ab
             if self._resize_after_id:
                 try:
                     self.after_cancel(self._resize_after_id)
                 except Exception:
                     pass
 
-            # Schedule resize end detection with shorter delay for faster recovery
+            # Plane Resize-Ende-Erkennung mit kürzerer Verzögerung für schnellere Wiederherstellung
             self._resize_after_id = self.after(100, self._detect_resize_end)
     
     # Erkennt das Ende einer Fenster-Größenänderung
     def _detect_resize_end(self):
         self._is_resizing = False
         self._resize_after_id = None
-        # Trigger a single update after resize ends
+        # Löse einzelnes Update aus nachdem Resize beendet
         try:
             self.update_idletasks()
         except Exception:
             pass
 
-    # --- Idle icon cache pre-warm and pruning ---
+    # --- Idle Icon-Cache Vorwärmung und Bereinigung ---
     # Startet das Vorwärmen des Icon-Caches im Leerlauf
     def _start_idle_icon_prewarm(self):
-        # Avoid multiple schedules
+        # Vermeide mehrfache Planungen
         if getattr(self, "_prewarm_started", False):
             return
         self._prewarm_started = True
 
         def worker():
             try:
-                # Pre-warm a subset first (up to 50)
+                # Wärme zuerst eine Teilmenge vor (bis zu 50)
                 for game in self.games[:50]:
                     p = game.get("path")
                     if not p:
@@ -1488,13 +2120,12 @@ class GameLauncherApp(ctk.CTk):
                     if p not in self._icon_pil_cache:
                         img = self.extract_icon_pil(p)
                         self._icon_pil_cache[p] = img
-                # Light pruning after pre-warm
+                # Leichte Bereinigung nach Vorwärmung
                 self._prune_icon_cache(
                     max_size_mb=self.settings.get("cache_size_mb", 200),
                     max_files=self.settings.get("cache_max_files", 2000)
                 )
-            finally:
-                # No UI update needed; icons will be used on demand
+            except Exception:
                 pass
 
         try:
@@ -1529,9 +2160,9 @@ class GameLauncherApp(ctk.CTk):
             if not entries:
                 return
             
-            # Sort oldest first
+            # Sortiere älteste zuerst
             entries.sort(key=lambda x: x[1])
-            # Prune if exceeding thresholds
+            # Bereinige falls Schwellwerte überschritten
             size_limit = max_size_mb * 1024 * 1024
             removed_count = 0
             while (total_size > size_limit or len(entries) > max_files) and entries:
@@ -1545,8 +2176,9 @@ class GameLauncherApp(ctk.CTk):
                         removed_count += 1
                 except (OSError, PermissionError):
                     continue
-        except Exception as e:
-            print(f"Cache pruning error: {e}")
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
     app = GameLauncherApp()
