@@ -1,4 +1,4 @@
-# 🎮 GameLauncher Project – Alpha v0.0.8  
+# 🎮 GameLauncher Project – Alpha v0.0.9.1  
 Ein moderner, anpassbarer **Game Launcher**, gebaut in Python mit *customtkinter*.  
 Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
@@ -6,10 +6,15 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
 ## ✨ Pictures
 
+<img width="1804" height="1247" alt="Screenshot 2025-12-15 012736" src="https://github.com/user-attachments/assets/8684944c-d5ce-4d2b-a09e-7d946ce9a640" />
 
-<img width="2036" height="1506" alt="Screenshot 2025-12-14 173439" src="https://github.com/user-attachments/assets/6eddfd72-72da-4c94-8a19-8c09d04bf487" />
+<img width="1804" height="1247" alt="Screenshot 2025-12-15 012517" src="https://github.com/user-attachments/assets/b3db6233-7179-4fd2-ba0a-f594081c3fff" />
 
-<img width="1804" height="1247" alt="Screenshot 2025-12-14 232615" src="https://github.com/user-attachments/assets/080050f8-199e-4554-ba14-5ce1e063b1db" />
+<img width="1804" height="1247" alt="Screenshot 2025-12-15 012523" src="https://github.com/user-attachments/assets/f05306f8-d482-4bd8-9239-34f1360dc860" />
+
+<img width="1804" height="1247" alt="Screenshot 2025-12-15 012526" src="https://github.com/user-attachments/assets/24af37de-f491-45e0-afde-be4762d089d7" />
+
+<img width="1804" height="1247" alt="Screenshot 2025-12-15 012544" src="https://github.com/user-attachments/assets/5f58932d-0464-4b26-996e-e292e8032999" />
 
 
 ## ✨ Features
