@@ -21,6 +21,9 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
 <img width="1804" height="1247" alt="Screenshot 2025-12-15 013056" src="https://github.com/user-attachments/assets/92d31536-97fd-4095-9a50-b68e2e1fd87a" />
 
+### GAME INFORMATIONS ARE CURRENTLY ONLY AVAILABLE WHEN RUNNING .PY FILE INSTEAD OF THE .EXE BUILD
+### TO-DO FIX THIS!
+
 ## ✨ Features
 
 ### 🕹 Game Library
@@ -49,27 +52,26 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 ---
 
 ## 🛠 Roadmap (1.0 Release Ziele)
-- Automatische Games Erkennung
-- Spielzeit-Anzeige (Steam API optional)
 - EPIC / EA / Ubisoft / Battle.net Detection
-- Storage Overview (Diskbar)
-- Besseren Installed Games Counter
-- Settings speichern (Theme, Fenstergröße, Position)
-- Color Themes für den Launcher
-- About-Dialog mit Icon + Version
 
 ## Nach 1.0 Release
-- Auto-Updater (über GitHub Releases)
+- Auto-Updater
 - Splash Screen beim Start
 - Crash Log System
 - Blur/Glass Effect (Windows 11 Style)
-- Animierte Buttons (Hover-Effekt)
 
 ### In Arbeit
+- Bug Fixes für pre-release builds
+
+### Fertig
+- Overall QoL Verbesserungen im UI und Code
+- Spielinfo-Anzeige (api.rawg.io)
+- About-Dialog mit Icon + Version
+- Animierte Buttons (Hover-Effekt)
+- Auto-Detect von installierten Launchern
+- Tabs: Games / System / Settings / About
+- Color Themes für den Launcher
+- Settings speichern
 - Automatische Games Erkennung
 - Game Cards statt Textliste
 - Game Grid statt Liste
-
-### Fertig
-- Auto-Detect von installierten Launchern
-- Tabs: Games / System / Settings
