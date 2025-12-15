@@ -16,6 +16,10 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
 <img width="1804" height="1247" alt="Screenshot 2025-12-15 012544" src="https://github.com/user-attachments/assets/5f58932d-0464-4b26-996e-e292e8032999" />
 
+### 🕹 Game Info Tab (NEW) - Example Borderland 4
+<img width="1804" height="1247" alt="Screenshot 2025-12-15 013106" src="https://github.com/user-attachments/assets/b678aa0c-70f7-474e-8fe9-0e3c9388e62a" />
+
+<img width="1804" height="1247" alt="Screenshot 2025-12-15 013056" src="https://github.com/user-attachments/assets/92d31536-97fd-4095-9a50-b68e2e1fd87a" />
 
 ## ✨ Features
 
