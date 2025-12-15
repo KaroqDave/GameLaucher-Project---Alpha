@@ -14,10 +14,22 @@ from threading import Thread
 from tkinter import filedialog, messagebox
 from PIL import Image
 import hashlib
+import ssl
+
+# Requests-Import mit Fehlerprotokollierung für PyInstaller-Debugging
+_requests_import_error: str | None = None
 try:
     import requests
-except ImportError:
-    requests = None  # Wird sanft behandelt wenn nicht installiert
+    # SSL-Zertifikate für PyInstaller-Builds konfigurieren
+    try:
+        import certifi
+        os.environ['SSL_CERT_FILE'] = certifi.where()
+        os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
+    except ImportError:
+        pass  # certifi nicht verfügbar, nutze System-Zertifikate
+except ImportError as e:
+    requests = None
+    _requests_import_error = str(e)  # Speichere Fehler für Debugging
 
 GAMES_FILE = "games.json"
 SETTINGS_FILE = "settings.json"
@@ -1556,7 +1568,8 @@ class GameLauncherApp(ctk.CTk):
     # Holt Spiel-Informationen von der RAWG API
     def _fetch_game_info(self, game_name: str) -> dict:
         if not requests:
-            return {"error": "requests library not installed"}
+            error_msg = f"Request Import Fehler: {_requests_import_error}" if _requests_import_error else "requests library nicht installiert"
+            return {"error": error_msg}
         
         try:
             # Bereinige Spielnamen für bessere Suchergebnisse
