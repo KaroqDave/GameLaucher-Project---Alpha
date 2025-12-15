@@ -21,9 +21,6 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 
 <img width="1804" height="1247" alt="Screenshot 2025-12-15 013056" src="https://github.com/user-attachments/assets/92d31536-97fd-4095-9a50-b68e2e1fd87a" />
 
-### GAME INFORMATIONS ARE CURRENTLY ONLY AVAILABLE WHEN RUNNING .PY FILE INSTEAD OF THE .EXE BUILD
-### TO-DO FIX THIS!
-
 ## ✨ Features
 
 ### 🕹 Game Library
@@ -61,7 +58,8 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 - Blur/Glass Effect (Windows 11 Style)
 
 ### In Arbeit
-- Bug Fixes für pre-release builds
+- Andere Bug Fixes
+- QoL Features
 
 ### Fertig
 - Overall QoL Verbesserungen im UI und Code
@@ -75,3 +73,4 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 - Automatische Games Erkennung
 - Game Cards statt Textliste
 - Game Grid statt Liste
+- Pre-release build fix
