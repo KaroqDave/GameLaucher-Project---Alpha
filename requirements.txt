@@ -1,0 +1,6 @@
+customtkinter
+psutil
+pywin32
+Pillow
+requests
+certifi
