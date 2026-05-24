@@ -29,7 +29,7 @@ Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
 - Rechtsklick-Menü:
   - Starten
   - Entfernen
-- Automatische Speicherung in `games.json`
+- Automatische Speicherung im Dokumente-Ordner (`Alpha Game Launcher/games.json`)
 
 ### 🖥 System Infos
 - Speicher (Freier und Belegter)
