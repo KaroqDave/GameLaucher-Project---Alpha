@@ -64,15 +64,6 @@ UI = {
     "danger_hover": ("#9f2d2d", "#b63f3f"),
     "warning": ("#b7791f", "#f4b942"),
 }
-DEFAULT_SETTINGS = {
-    "chunk_size": 12,
-    "cache_size_mb": 200,
-    "cache_max_files": 2000,
-    "steamgriddb_api_key": "",
-    "rawg_api_key": "",
-    "artwork_provider": "steamgriddb",
-    "language": "de",
-}
 STEAMGRIDDB_BASE_URL = "https://www.steamgriddb.com/api/v2"
 LANGUAGE_NAMES = {
     "de": "Deutsch",
@@ -267,7 +258,6 @@ TRANSLATIONS = {
         "save_failed_title": "Save failed",
     },
 }
-
 CLEAN_TRANSLATIONS = {
     "de": {
         "app_title": "Alpha Game Launcher",
@@ -385,7 +375,6 @@ CLEAN_TRANSLATIONS = {
 for _language, _values in CLEAN_TRANSLATIONS.items():
     TRANSLATIONS.setdefault(_language, {}).update(_values)
 
-
 def app_data_dir() -> str:
     documents = os.path.join(os.path.expanduser("~"), "Documents")
     base = documents if os.path.isdir(documents) else os.path.expanduser("~")
@@ -457,36 +446,42 @@ class GameLauncherApp(ctk.CTk):
         self._current_game_detail = None
         self._is_scrolling = False
         self._scroll_idle_after_id: str | None = None
+        self._scroll_poll_after_id: str | None = None
         self._pending_icon_updates: list[tuple[str, tuple[int, int], ctk.CTkLabel]] = []
         self._hovered_card: ctk.CTkFrame | None = None
+        self._active_view = "library"
+        self._nav_buttons: dict[str, ctk.CTkButton] = {}
+        self._last_library_width = 0
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
 
         self.title(TRANSLATIONS[DEFAULT_SETTINGS["language"]]["window_title"])
 
-        self.font_title = ctk.CTkFont(size=20, weight="bold")
-        self.font_section = ctk.CTkFont(size=16, weight="bold")
-        self.font_subsection = ctk.CTkFont(size=14, weight="bold")
+        self.font_title = ctk.CTkFont(size=22, weight="bold")
+        self.font_section = ctk.CTkFont(size=24, weight="bold")
+        self.font_subsection = ctk.CTkFont(size=15, weight="bold")
         self.font_card_title = ctk.CTkFont(size=14, weight="bold")
+        self.font_body = ctk.CTkFont(size=13)
+        self.font_caption = ctk.CTkFont(size=11)
 
-        window_width = 1200
-        window_height = 800
+        window_width = 1280
+        window_height = 820
         self.geometry(f"{window_width}x{window_height}")
         self.center_window(window_width, window_height)
 
-        self.resizable(False, False)
+        self.minsize(980, 680)
+        self.resizable(True, True)
 
         self.settings = self.load_settings()
 
         self.games = []
         self.load_games()
 
-        self.grid_rowconfigure(0, weight=0)
-        self.grid_rowconfigure(1, weight=1)
+        self.configure(fg_color=UI["bg"])
+        self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
-        self.create_header_bar()
         self.create_main_tabs()
 
         self.bind("<Configure>", self._detect_resize_start, add="+")
@@ -512,10 +507,8 @@ class GameLauncherApp(ctk.CTk):
             widget.destroy()
 
         self.title(self.t("window_title"))
-        self.grid_rowconfigure(0, weight=0)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
-        self.create_header_bar()
         self.create_main_tabs()
 
     def center_window(self, width, height):
@@ -523,10 +516,34 @@ class GameLauncherApp(ctk.CTk):
         y = (self.winfo_screenheight() // 2) - (height // 2)
         self.geometry(f"+{x}+{y}")
 
+    def _button_style(self, kind: str = "secondary") -> dict:
+        styles = {
+            "primary": {"fg_color": UI["accent"], "hover_color": UI["accent_hover"], "text_color": "white"},
+            "success": {"fg_color": UI["success"], "hover_color": UI["success_hover"], "text_color": "white"},
+            "danger": {"fg_color": UI["danger"], "hover_color": UI["danger_hover"], "text_color": "white"},
+            "secondary": {"fg_color": UI["surface_alt"], "hover_color": UI["surface_hover"], "text_color": UI["text"]},
+            "ghost": {"fg_color": "transparent", "hover_color": UI["surface_hover"], "text_color": UI["text"]},
+        }
+        return styles.get(kind, styles["secondary"])
+
+    def _create_panel(self, parent, **kwargs):
+        options = {
+            "fg_color": UI["surface"],
+            "border_color": UI["border"],
+            "border_width": 1,
+            "corner_radius": 14,
+        }
+        options.update(kwargs)
+        return ctk.CTkFrame(parent, **options)
+
+    def _clear_content(self):
+        self._cancel_games_scroll_poll()
+        for widget in self.content_frame.winfo_children():
+            widget.destroy()
+
     def create_header_bar(self):
-        self.header_frame = ctk.CTkFrame(self, corner_radius=0)
-        self.header_frame.grid(row=0, column=0, sticky="ew")
-        self.header_frame.grid_columnconfigure(0, weight=1)
+        self.header_frame = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent", corner_radius=0)
+        self.header_frame.pack(fill="x", padx=18, pady=(20, 16))
 
         logo_path = resource_path("assets/game_launcher.png")
 
@@ -534,7 +551,7 @@ class GameLauncherApp(ctk.CTk):
         self.logo_image = ctk.CTkImage(
             light_image=pil_logo,
             dark_image=pil_logo,
-            size=(32, 32)
+            size=(42, 42)
         )
 
         self.logo_label = ctk.CTkLabel(
@@ -542,27 +559,131 @@ class GameLauncherApp(ctk.CTk):
             image=self.logo_image,
             text=""
         )
-        self.logo_label.grid(row=0, column=0, pady=(5, 0))
+        self.logo_label.pack(side="left", padx=(0, 10))
+
+        brand_text = ctk.CTkFrame(self.header_frame, fg_color="transparent")
+        brand_text.pack(side="left", fill="x", expand=True)
 
         self.title_label = ctk.CTkLabel(
-            self.header_frame,
-            text=self.t("header_title"),
-            font=self.font_title
+            brand_text,
+            text="Alpha",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color=UI["text"],
+            anchor="w"
         )
-        self.title_label.grid(row=1, column=0)
+        self.title_label.pack(anchor="w")
+
+        subtitle_label = ctk.CTkLabel(
+            brand_text,
+            text="Game Launcher",
+            font=ctk.CTkFont(size=11),
+            text_color=UI["muted"],
+            anchor="w"
+        )
+        subtitle_label.pack(anchor="w")
+
+    def _create_nav_button(self, key: str, text: str):
+        btn = ctk.CTkButton(
+            self.nav_frame,
+            text=text,
+            anchor="w",
+            height=42,
+            corner_radius=10,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=lambda view=key: self.show_view(view),
+            **self._button_style("ghost")
+        )
+        btn.pack(fill="x", pady=4)
+        self._nav_buttons[key] = btn
+
+    def _refresh_nav_state(self):
+        for key, btn in self._nav_buttons.items():
+            btn.configure(**self._button_style("primary" if key == self._active_view else "ghost"))
 
     def create_main_tabs(self):
-        self.main_tabview = ctk.CTkTabview(self)
-        self.main_tabview.grid(
-            row=1, column=0, sticky="nsew", padx=10, pady=10)
+        self.shell_frame = ctk.CTkFrame(self, fg_color=UI["bg"], corner_radius=0)
+        self.shell_frame.grid(row=0, column=0, sticky="nsew")
+        self.shell_frame.grid_rowconfigure(0, weight=1)
+        self.shell_frame.grid_columnconfigure(1, weight=1)
 
-        self.games_tab = self.main_tabview.add(self.t("tab_games"))
-        self.settings_tab = self.main_tabview.add(self.t("tab_settings"))
-        self.about_tab = self.main_tabview.add(self.t("tab_about"))
+        self.sidebar_frame = ctk.CTkFrame(
+            self.shell_frame,
+            fg_color=UI["sidebar"],
+            corner_radius=0,
+            width=240
+        )
+        self.sidebar_frame.grid(row=0, column=0, sticky="nsw")
+        self.sidebar_frame.grid_propagate(False)
 
-        self.create_games_tab_content()
-        self.create_settings_tab_content()
-        self.create_about_tab_content()
+        self.create_header_bar()
+
+        self.nav_frame = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
+        self.nav_frame.pack(fill="x", padx=14, pady=(0, 12))
+        self._create_nav_button("library", self.t("tab_games"))
+        self._create_nav_button("settings", self.t("tab_settings"))
+        self._create_nav_button("about", self.t("tab_about"))
+
+        self.sidebar_footer = self._create_panel(self.sidebar_frame, fg_color=UI["surface_alt"], corner_radius=12)
+        self.sidebar_footer.pack(side="bottom", fill="x", padx=14, pady=16)
+        self.sidebar_count_label = ctk.CTkLabel(
+            self.sidebar_footer,
+            text=self.t("installed_games", count=len(self.games)),
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=UI["text"],
+            anchor="w"
+        )
+        self.sidebar_count_label.pack(fill="x", padx=12, pady=(12, 2))
+        ctk.CTkLabel(
+            self.sidebar_footer,
+            text=f"Version {APP_VERSION}",
+            font=self.font_caption,
+            text_color=UI["muted"],
+            anchor="w"
+        ).pack(fill="x", padx=12, pady=(0, 12))
+
+        self.content_frame = ctk.CTkFrame(self.shell_frame, fg_color=UI["bg"], corner_radius=0)
+        self.content_frame.grid(row=0, column=1, sticky="nsew", padx=18, pady=18)
+        self.content_frame.grid_rowconfigure(0, weight=1)
+        self.content_frame.grid_columnconfigure(0, weight=1)
+
+        self.show_view(getattr(self, "_active_view", "library"))
+
+    def show_view(self, view: str):
+        self._active_view = view
+        self._refresh_nav_state()
+        self._clear_content()
+
+        if view == "settings":
+            self.settings_tab = self.content_frame
+            self.create_settings_tab_content()
+        elif view == "about":
+            self.about_tab = self.content_frame
+            self.create_about_tab_content()
+        else:
+            self.games_tab = self.content_frame
+            self.create_games_tab_content()
+
+    def _create_view_header(self, parent, title: str, subtitle: str = ""):
+        header = ctk.CTkFrame(parent, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 14))
+        text_frame = ctk.CTkFrame(header, fg_color="transparent")
+        text_frame.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(
+            text_frame,
+            text=title,
+            font=self.font_section,
+            text_color=UI["text"],
+            anchor="w"
+        ).pack(anchor="w")
+        if subtitle:
+            ctk.CTkLabel(
+                text_frame,
+                text=subtitle,
+                font=self.font_body,
+                text_color=UI["muted"],
+                anchor="w"
+            ).pack(anchor="w", pady=(2, 0))
+        return header
 
     def extract_icon_pil(self, exe_path: str) -> Image.Image | None:
         large = []
@@ -907,78 +1028,112 @@ class GameLauncherApp(ctk.CTk):
         self.games_tab.grid_rowconfigure(0, weight=1)
         self.games_tab.grid_columnconfigure(0, weight=1)
 
-        self.left_frame = ctk.CTkFrame(self.games_tab, corner_radius=0)
+        self.left_frame = ctk.CTkFrame(self.games_tab, fg_color="transparent", corner_radius=0)
         self.left_frame.grid(row=0, column=0, sticky="nsew")
+        self.left_frame.grid_rowconfigure(1, weight=1)
+        self.left_frame.grid_columnconfigure(0, weight=1)
 
-        header_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
-        header_frame.pack(padx=10, pady=(10, 5), fill="x")
-
-        title_label = ctk.CTkLabel(
-            header_frame,
-            text=self.t("games_title"),
-            font=self.font_section
+        header_frame = self._create_view_header(
+            self.left_frame,
+            self.t("games_title"),
+            self.t("installed_games", count=len(self.games))
         )
-        title_label.pack(side="left")
+
+        actions_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        actions_frame.pack(side="right")
+
+        import_btn = ctk.CTkButton(
+            actions_frame,
+            text=self.t("steam_import"),
+            height=36,
+            corner_radius=10,
+            command=self.import_steam_games,
+            **self._button_style("secondary")
+        )
+        import_btn.pack(side="left", padx=(0, 8))
+        self.steam_import_btn = import_btn
+
+        add_game_btn = ctk.CTkButton(
+            actions_frame,
+            text=self.t("add_game"),
+            command=self.add_game_dialog,
+            height=36,
+            corner_radius=10,
+            **self._button_style("primary")
+        )
+        add_game_btn.pack(side="left")
+
+        command_panel = self._create_panel(self.left_frame, fg_color=UI["surface"], corner_radius=14)
+        command_panel.pack(fill="x", pady=(0, 14))
+        command_panel.grid_columnconfigure(0, weight=1)
 
         self.search_entry = ctk.CTkEntry(
-            header_frame,
+            command_panel,
             placeholder_text=self.t("search_placeholder"),
-            width=200
+            height=38,
+            border_color=UI["border"],
+            fg_color=UI["surface_alt"]
         )
-        self.search_entry.pack(side="right", padx=(10, 0))
+        self.search_entry.grid(row=0, column=0, sticky="ew", padx=12, pady=12)
         self.search_entry.bind("<KeyRelease>", self._on_search_changed)
+        if self._search_term:
+            self.search_entry.insert(0, self._search_term)
 
-        sort_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
-        sort_frame.pack(padx=10, pady=(0, 5), fill="x")
+        sort_frame = ctk.CTkFrame(command_panel, fg_color=UI["surface_alt"], corner_radius=10)
+        sort_frame.grid(row=0, column=1, sticky="e", padx=(0, 12), pady=12)
 
-        sort_label = ctk.CTkLabel(sort_frame, text=self.t("sort_label"))
-        sort_label.pack(side="left", padx=(0, 10))
+        sort_label = ctk.CTkLabel(sort_frame, text=self.t("sort_label"), text_color=UI["muted"], font=self.font_caption)
+        sort_label.pack(side="left", padx=(10, 6))
 
         self.sort_name_btn = ctk.CTkButton(
             sort_frame,
             text=self.t("sort_name"),
-            width=80,
-            fg_color="#1f6aa5",
+            width=76,
+            height=30,
+            corner_radius=8,
             command=lambda: self._set_sort_mode("name")
         )
-        self.sort_name_btn.pack(side="left", padx=2)
+        self.sort_name_btn.pack(side="left", padx=2, pady=4)
 
         self.sort_fav_btn = ctk.CTkButton(
             sort_frame,
             text=self.t("sort_favorites"),
-            width=100,
-            fg_color=("gray75", "gray25"),
+            width=104,
+            height=30,
+            corner_radius=8,
             command=lambda: self._set_sort_mode("favorite")
         )
-        self.sort_fav_btn.pack(side="left", padx=2)
+        self.sort_fav_btn.pack(side="left", padx=2, pady=4)
 
         self.sort_date_btn = ctk.CTkButton(
             sort_frame,
             text=self.t("sort_added"),
-            width=100,
-            fg_color=("gray75", "gray25"),
+            width=104,
+            height=30,
+            corner_radius=8,
             command=lambda: self._set_sort_mode("date_added")
         )
-        self.sort_date_btn.pack(side="left", padx=2)
+        self.sort_date_btn.pack(side="left", padx=(2, 4), pady=4)
+        self._refresh_sort_buttons()
 
-        scroll_container = ctk.CTkFrame(self.left_frame, fg_color="transparent")
-        scroll_container.pack(padx=10, pady=(0, 10), fill="both", expand=True)
+        scroll_container = self._create_panel(self.left_frame, fg_color=UI["surface"], corner_radius=16)
+        scroll_container.pack(fill="both", expand=True)
 
-        self.games_scroll = ctk.CTkScrollableFrame(scroll_container)
-        self.games_scroll.pack(fill="both", expand=True)
+        self.games_scroll = ctk.CTkScrollableFrame(scroll_container, fg_color="transparent")
+        self.games_scroll.pack(fill="both", expand=True, padx=8, pady=8)
 
         self._scroll_canvas = self.games_scroll._parent_canvas
 
         self.scroll_overlay = ctk.CTkFrame(
             scroll_container,
-            fg_color=("#e0e0e0", "#2a2a2a"),
-            corner_radius=8
+            fg_color=UI["surface_alt"],
+            corner_radius=14
         )
         self.scroll_overlay_label = ctk.CTkLabel(
             self.scroll_overlay,
             text=self.t("scrolling"),
-            font=ctk.CTkFont(size=20, weight="bold"),
-            text_color=("#333333", "#aaaaaa")
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=UI["muted"]
         )
         self.scroll_overlay_label.pack(expand=True)
 
@@ -1012,7 +1167,7 @@ class GameLauncherApp(ctk.CTk):
 
                 if self._hovered_card is not None:
                     try:
-                        self._hovered_card.configure(border_color="#2a2a2a", border_width=2)
+                        self._hovered_card.configure(border_color=UI["border"], border_width=1)
                     except Exception:
                         pass
                     self._hovered_card = None
@@ -1039,20 +1194,12 @@ class GameLauncherApp(ctk.CTk):
 
         self.after(100, _check_scroll_position)
 
-        self._games_columns = 3
+        self._games_columns = self._calculate_game_columns()
         self._games_chunk_size = self.settings.get("chunk_size", 12)
         self._rendered_games_count = 0
         self._scroll_poll_after_id: str | None = None
 
         self.render_game_buttons()
-
-        add_game_btn = ctk.CTkButton(
-            self.left_frame,
-            text=self.t("add_game"),
-            command=self.add_game_dialog,
-            height=35
-        )
-        add_game_btn.pack(padx=10, pady=(0, 10), fill="x")
 
     def _on_search_changed(self, event=None):
         self._search_term = self.search_entry.get().lower()
@@ -1060,11 +1207,35 @@ class GameLauncherApp(ctk.CTk):
 
     def _set_sort_mode(self, mode: str):
         self._sort_mode = mode
-
-        self.sort_name_btn.configure(fg_color=("#1f6aa5" if mode == "name" else ("gray75", "gray25")))
-        self.sort_fav_btn.configure(fg_color=("#1f6aa5" if mode == "favorite" else ("gray75", "gray25")))
-        self.sort_date_btn.configure(fg_color=("#1f6aa5" if mode == "date_added" else ("gray75", "gray25")))
+        self._refresh_sort_buttons()
         self.render_game_buttons()
+
+    def _refresh_sort_buttons(self):
+        if not all(hasattr(self, attr) for attr in ("sort_name_btn", "sort_fav_btn", "sort_date_btn")):
+            return
+        buttons = {
+            "name": self.sort_name_btn,
+            "favorite": self.sort_fav_btn,
+            "date_added": self.sort_date_btn,
+        }
+        for mode, button in buttons.items():
+            button.configure(**self._button_style("primary" if self._sort_mode == mode else "ghost"))
+
+    def _calculate_game_columns(self) -> int:
+        width = 0
+        if hasattr(self, "games_scroll") and self.games_scroll.winfo_exists():
+            try:
+                width = self.games_scroll.winfo_width()
+            except Exception:
+                width = 0
+        if width <= 1 and hasattr(self, "content_frame"):
+            try:
+                width = self.content_frame.winfo_width()
+            except Exception:
+                width = 0
+        if width <= 1:
+            width = self.winfo_width() - 300
+        return max(2, min(5, width // 285))
 
     def _get_filtered_sorted_games(self) -> list[dict]:
         filtered = self.games
@@ -1088,6 +1259,8 @@ class GameLauncherApp(ctk.CTk):
     def update_games_count_label(self):
         if hasattr(self, "games_count_label"):
             self.games_count_label.configure(text=self.t("installed_games", count=len(self.games)))
+        if hasattr(self, "sidebar_count_label"):
+            self.sidebar_count_label.configure(text=self.t("installed_games", count=len(self.games)))
 
     def refresh_launcher_info(self):
         for child in self.launchers_frame.winfo_children():
@@ -1131,7 +1304,7 @@ class GameLauncherApp(ctk.CTk):
             parent,
             text=f"{self.t('data_location')} {app_data_dir()}",
             font=ctk.CTkFont(size=11),
-            text_color="#888888"
+            text_color=UI["muted"]
         )
         data_label.grid(row=start_row + 2, column=0, sticky="w", padx=10, pady=(0, 4))
 
@@ -1139,7 +1312,7 @@ class GameLauncherApp(ctk.CTk):
             parent,
             text=f"{self.t('cache_location')} {cache_data_dir()}",
             font=ctk.CTkFont(size=11),
-            text_color="#888888"
+            text_color=UI["muted"]
         )
         cache_label.grid(row=start_row + 3, column=0, sticky="w", padx=10, pady=(0, 10))
 
@@ -1150,7 +1323,7 @@ class GameLauncherApp(ctk.CTk):
         )
         launchers_title.grid(row=start_row + 4, column=0, sticky="w", pady=(5, 5), padx=10)
 
-        self.launchers_frame = ctk.CTkFrame(parent)
+        self.launchers_frame = ctk.CTkFrame(parent, fg_color=UI["surface_alt"], corner_radius=10)
         self.launchers_frame.grid(row=start_row + 5, column=0, sticky="ew", padx=10, pady=(0, 10))
 
         self.launchers_status = self.detect_launchers()
@@ -1158,7 +1331,10 @@ class GameLauncherApp(ctk.CTk):
         self.steam_import_btn = ctk.CTkButton(
             parent,
             text=self.t("steam_import"),
-            command=self.import_steam_games
+            command=self.import_steam_games,
+            height=36,
+            corner_radius=10,
+            **self._button_style("secondary")
         )
         self.steam_import_btn.grid(row=start_row + 6, column=0, sticky="ew", padx=10, pady=(10, 6))
 
@@ -1166,8 +1342,9 @@ class GameLauncherApp(ctk.CTk):
             parent,
             text=self.t("remove_all_games"),
             command=self.remove_all_games,
-            fg_color="#aa4444",
-            hover_color="#883333"
+            height=36,
+            corner_radius=10,
+            **self._button_style("danger")
         )
         self.remove_all_btn.grid(row=start_row + 7, column=0, sticky="ew", padx=10, pady=(0, 6))
 
@@ -1419,106 +1596,151 @@ class GameLauncherApp(ctk.CTk):
         self.settings_tab.grid_rowconfigure(0, weight=1)
         self.settings_tab.grid_columnconfigure(0, weight=1)
 
-        settings_scroll = ctk.CTkScrollableFrame(self.settings_tab)
-        settings_scroll.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+        settings_scroll = ctk.CTkScrollableFrame(self.settings_tab, fg_color="transparent")
+        settings_scroll.grid(row=0, column=0, sticky="nsew")
         settings_scroll.grid_columnconfigure(0, weight=1)
 
-        title_label = ctk.CTkLabel(
+        self._create_view_header(
             settings_scroll,
-            text=self.t("settings_title"),
-            font=self.font_section
+            self.t("settings_title"),
+            "Theme, language, API keys, cache, and library tools."
         )
-        title_label.grid(row=0, column=0, sticky="w", pady=(10, 10), padx=10)
+
+        appearance_panel = self._create_panel(settings_scroll)
+        appearance_panel.pack(fill="x", pady=(0, 12))
+        appearance_panel.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            appearance_panel,
+            text="Appearance",
+            font=self.font_subsection,
+            text_color=UI["text"]
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=16, pady=(14, 10))
 
         theme_label = ctk.CTkLabel(
-            settings_scroll,
-            text=self.t("theme")
+            appearance_panel,
+            text=self.t("theme"),
+            text_color=UI["muted"]
         )
-        theme_label.grid(row=1, column=0, sticky="w", padx=10, pady=(0, 5))
+        theme_label.grid(row=1, column=0, sticky="w", padx=16, pady=(0, 10))
 
         saved_theme = self.settings.get("theme", "Dark")
         self.theme_var = ctk.StringVar(value=saved_theme)
         ctk.set_appearance_mode(saved_theme)
 
         self.theme_optionmenu = ctk.CTkOptionMenu(
-            settings_scroll,
+            appearance_panel,
             values=["System", "Dark", "Light"],
             variable=self.theme_var,
             command=self.change_appearance_mode
         )
-        self.theme_optionmenu.grid(row=1, column=0, sticky="w", padx=80, pady=(0, 15))
+        self.theme_optionmenu.grid(row=1, column=1, sticky="ew", padx=(10, 16), pady=(0, 10))
 
         language_label = ctk.CTkLabel(
-            settings_scroll,
-            text=self.t("language")
+            appearance_panel,
+            text=self.t("language"),
+            text_color=UI["muted"]
         )
-        language_label.grid(row=2, column=0, sticky="w", padx=10, pady=(0, 5))
+        language_label.grid(row=2, column=0, sticky="w", padx=16, pady=(0, 16))
 
         self.language_var = ctk.StringVar(value=self._language_label(self.settings.get("language", DEFAULT_SETTINGS["language"])))
         self.language_optionmenu = ctk.CTkOptionMenu(
-            settings_scroll,
+            appearance_panel,
             values=list(LANGUAGE_NAMES.values()),
             variable=self.language_var
         )
-        self.language_optionmenu.grid(row=2, column=0, sticky="w", padx=100, pady=(0, 15))
+        self.language_optionmenu.grid(row=2, column=1, sticky="ew", padx=(10, 16), pady=(0, 16))
+
+        api_panel = self._create_panel(settings_scroll)
+        api_panel.pack(fill="x", pady=(0, 12))
+        api_panel.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            api_panel,
+            text="Artwork and game info",
+            font=self.font_subsection,
+            text_color=UI["text"]
+        ).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 10))
 
         steamgriddb_label = ctk.CTkLabel(
-            settings_scroll,
-            text=self.t("steamgriddb_key")
+            api_panel,
+            text=self.t("steamgriddb_key"),
+            text_color=UI["muted"]
         )
-        steamgriddb_label.grid(row=3, column=0, sticky="w", padx=10, pady=(0, 5))
+        steamgriddb_label.grid(row=1, column=0, sticky="w", padx=16, pady=(0, 5))
 
         self.steamgriddb_key_entry = ctk.CTkEntry(
-            settings_scroll,
+            api_panel,
             show="*",
-            placeholder_text=self.t("steamgriddb_placeholder")
+            placeholder_text=self.t("steamgriddb_placeholder"),
+            height=36,
+            fg_color=UI["surface_alt"],
+            border_color=UI["border"]
         )
         self.steamgriddb_key_entry.insert(0, self.settings.get("steamgriddb_api_key", ""))
-        self.steamgriddb_key_entry.grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 10))
+        self.steamgriddb_key_entry.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 12))
 
         rawg_label = ctk.CTkLabel(
-            settings_scroll,
-            text=self.t("rawg_key")
+            api_panel,
+            text=self.t("rawg_key"),
+            text_color=UI["muted"]
         )
-        rawg_label.grid(row=5, column=0, sticky="w", padx=10, pady=(0, 5))
+        rawg_label.grid(row=3, column=0, sticky="w", padx=16, pady=(0, 5))
 
         self.rawg_key_entry = ctk.CTkEntry(
-            settings_scroll,
+            api_panel,
             show="*",
-            placeholder_text=self.t("rawg_placeholder")
+            placeholder_text=self.t("rawg_placeholder"),
+            height=36,
+            fg_color=UI["surface_alt"],
+            border_color=UI["border"]
         )
         self.rawg_key_entry.insert(0, self.settings.get("rawg_api_key", ""))
-        self.rawg_key_entry.grid(row=6, column=0, sticky="ew", padx=10, pady=(0, 10))
+        self.rawg_key_entry.grid(row=4, column=0, sticky="ew", padx=16, pady=(0, 16))
 
         save_settings_btn = ctk.CTkButton(
-            settings_scroll,
+            api_panel,
             text=self.t("save_settings"),
             command=self._save_all_settings,
-            height=35,
-            fg_color="#2d8a2d",
-            hover_color="#246624"
+            height=38,
+            corner_radius=10,
+            **self._button_style("success")
         )
-        save_settings_btn.grid(row=7, column=0, sticky="ew", padx=10, pady=(10, 10))
+        save_settings_btn.grid(row=5, column=0, sticky="ew", padx=16, pady=(0, 16))
+
+        library_panel = self._create_panel(settings_scroll)
+        library_panel.pack(fill="x", pady=(0, 12))
+        library_panel.grid_columnconfigure(0, weight=1)
 
         clear_cache_btn = ctk.CTkButton(
-            settings_scroll,
+            library_panel,
             text=self.t("clear_image_cache"),
-            command=self._clear_icon_cache
+            command=self._clear_icon_cache,
+            height=34,
+            corner_radius=10,
+            **self._button_style("secondary")
         )
-        clear_cache_btn.grid(row=8, column=0, sticky="w", padx=10, pady=(0, 10))
+        clear_cache_btn.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 8))
 
-        self.create_library_settings_content(settings_scroll, 9)
+        self.create_library_settings_content(library_panel, 1)
 
     def create_about_tab_content(self):
         self.about_tab.grid_rowconfigure(0, weight=1)
         self.about_tab.grid_columnconfigure(0, weight=1)
 
-        about_scroll = ctk.CTkScrollableFrame(self.about_tab)
-        about_scroll.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+        about_scroll = ctk.CTkScrollableFrame(self.about_tab, fg_color="transparent")
+        about_scroll.grid(row=0, column=0, sticky="nsew")
         about_scroll.grid_columnconfigure(0, weight=1)
 
-        about_container = ctk.CTkFrame(about_scroll, fg_color="transparent")
-        about_container.grid(row=0, column=0, sticky="", pady=10)
+        self._create_view_header(
+            about_scroll,
+            "Alpha Game Launcher",
+            "A local Windows launcher for a clean, artwork-forward game library."
+        )
+
+        about_container = self._create_panel(about_scroll, fg_color=UI["surface"], corner_radius=18)
+        about_container.pack(fill="x", pady=(0, 12))
+        about_container.grid_columnconfigure(1, weight=1)
 
         try:
             logo_path = resource_path("assets/game_launcher.png")
@@ -1533,45 +1755,48 @@ class GameLauncherApp(ctk.CTk):
                 image=self.about_logo,
                 text=""
             )
-            logo_label.pack(pady=(20, 15))
+            logo_label.grid(row=0, column=0, rowspan=3, padx=24, pady=24)
         except Exception:
             pass
 
         app_name = ctk.CTkLabel(
             about_container,
             text="Alpha Game Launcher",
-            font=ctk.CTkFont(size=28, weight="bold")
+            font=ctk.CTkFont(size=28, weight="bold"),
+            text_color=UI["text"],
+            anchor="w"
         )
-        app_name.pack(pady=(0, 5))
+        app_name.grid(row=0, column=1, sticky="sw", padx=(0, 24), pady=(28, 2))
 
         version_label = ctk.CTkLabel(
             about_container,
-            text="Version 0.0.9.1 - Beta",
+            text=f"Version {APP_VERSION} - Beta",
             font=ctk.CTkFont(size=14),
-            text_color="#888888"
+            text_color=UI["muted"],
+            anchor="w"
         )
-        version_label.pack(pady=(0, 20))
-
-        separator = ctk.CTkFrame(about_container, height=2, fg_color="#444444")
-        separator.pack(fill="x", padx=40, pady=10)
+        version_label.grid(row=1, column=1, sticky="w", padx=(0, 24), pady=(0, 10))
 
         description = ctk.CTkLabel(
             about_container,
             text=self.t("about_description"),
             font=ctk.CTkFont(size=13),
-            justify="center"
+            text_color=UI["muted"],
+            justify="left",
+            anchor="w"
         )
-        description.pack(pady=(10, 20))
+        description.grid(row=2, column=1, sticky="new", padx=(0, 24), pady=(0, 24))
 
-        features_frame = ctk.CTkFrame(about_container, corner_radius=10)
-        features_frame.pack(padx=20, pady=10, fill="x")
+        features_frame = self._create_panel(about_scroll, fg_color=UI["surface"])
+        features_frame.pack(fill="x", pady=(0, 12))
 
         features_title = ctk.CTkLabel(
             features_frame,
             text=self.t("features"),
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=ctk.CTkFont(size=15, weight="bold"),
+            text_color=UI["text"]
         )
-        features_title.pack(pady=(15, 10))
+        features_title.pack(anchor="w", padx=16, pady=(14, 10))
 
         features = [
             self.t("feature_steam"),
@@ -1585,20 +1810,22 @@ class GameLauncherApp(ctk.CTk):
                 features_frame,
                 text=feature,
                 font=ctk.CTkFont(size=12),
+                text_color=UI["muted"],
                 anchor="w"
             )
-            f_label.pack(pady=2, padx=20, anchor="w")
+            f_label.pack(fill="x", pady=2, padx=16)
 
         spacer = ctk.CTkLabel(features_frame, text="")
-        spacer.pack(pady=5)
+        spacer.pack(pady=3)
 
-        dev_frame = ctk.CTkFrame(about_container, corner_radius=10, fg_color="#1a1a2e")
-        dev_frame.pack(padx=20, pady=(20, 10), fill="x")
+        dev_frame = self._create_panel(about_scroll, fg_color=UI["surface_alt"])
+        dev_frame.pack(fill="x")
 
         dev_title = ctk.CTkLabel(
             dev_frame,
             text=self.t("developed_by"),
-            font=ctk.CTkFont(size=13, weight="bold")
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=UI["muted"]
         )
         dev_title.pack(pady=(15, 5))
 
@@ -1606,7 +1833,7 @@ class GameLauncherApp(ctk.CTk):
             dev_frame,
             text="KaroqDave",
             font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#4da6ff"
+            text_color=UI["accent"]
         )
         dev_name.pack(pady=(0, 5))
 
@@ -1614,17 +1841,17 @@ class GameLauncherApp(ctk.CTk):
             dev_frame,
             text="github.com/KaroqDave",
             font=ctk.CTkFont(size=11),
-            text_color="#888888"
+            text_color=UI["muted"]
         )
         github_label.pack(pady=(0, 15))
 
         copyright_label = ctk.CTkLabel(
-            about_container,
+            about_scroll,
             text=self.t("copyright"),
             font=ctk.CTkFont(size=10),
-            text_color="#666666"
+            text_color=UI["muted"]
         )
-        copyright_label.pack(pady=(20, 10))
+        copyright_label.pack(anchor="w", pady=(16, 0))
 
     def _save_all_settings(self):
         self.settings["theme"] = self.theme_var.get()
@@ -1766,7 +1993,8 @@ class GameLauncherApp(ctk.CTk):
         for widget in self.games_scroll.winfo_children():
             widget.destroy()
 
-        columns = getattr(self, "_games_columns", 3)
+        columns = self._calculate_game_columns()
+        self._games_columns = columns
         for col in range(columns):
             self.games_scroll.grid_columnconfigure(col, weight=1, uniform="games")
 
@@ -1774,11 +2002,16 @@ class GameLauncherApp(ctk.CTk):
 
         if not self._display_games:
             msg = self.t("no_games_found") if self._search_term else self.t("no_games_empty")
+            empty = self._create_panel(self.games_scroll, fg_color=UI["surface_alt"], corner_radius=14)
+            empty.grid(row=0, column=0, columnspan=columns, pady=22, padx=12, sticky="nsew")
             label = ctk.CTkLabel(
-                self.games_scroll,
+                empty,
                 text=msg,
+                font=ctk.CTkFont(size=15, weight="bold"),
+                text_color=UI["muted"],
+                justify="center"
             )
-            label.grid(row=0, column=0, columnspan=columns, pady=10, padx=10, sticky="nsew")
+            label.pack(expand=True, fill="both", padx=20, pady=34)
 
             self._cancel_games_scroll_poll()
             return
@@ -1859,48 +2092,55 @@ class GameLauncherApp(ctk.CTk):
         self._current_game_detail = game
 
         for widget in self.left_frame.winfo_children():
-            widget.pack_forget()
+            widget.destroy()
 
-        detail_scroll = ctk.CTkScrollableFrame(self.left_frame)
-        detail_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        detail_scroll = ctk.CTkScrollableFrame(self.left_frame, fg_color="transparent")
+        detail_scroll.pack(fill="both", expand=True)
 
         back_btn = ctk.CTkButton(
             detail_scroll,
             text=self.t("back_to_list"),
             command=self._hide_game_detail,
             width=150,
-            height=35
+            height=36,
+            corner_radius=10,
+            **self._button_style("secondary")
         )
-        back_btn.pack(anchor="w", pady=(0, 15))
+        back_btn.pack(anchor="w", pady=(0, 14))
 
-        header_frame = ctk.CTkFrame(detail_scroll, fg_color="transparent")
-        header_frame.pack(fill="x", pady=(0, 20))
+        header_frame = self._create_panel(detail_scroll, fg_color=UI["surface"], corner_radius=18)
+        header_frame.pack(fill="x", pady=(0, 16))
+        header_frame.grid_columnconfigure(1, weight=1)
 
-        icon_label = ctk.CTkLabel(header_frame, text="", width=220, height=104)
-        icon_label.pack(side="left", padx=(0, 20))
+        icon_label = ctk.CTkLabel(header_frame, text="", width=300, height=140)
+        icon_label.grid(row=0, column=0, rowspan=2, sticky="nw", padx=18, pady=18)
         icon_label.pack_propagate(False)
-        self._set_game_artwork_async(game, (220, 104), icon_label)
+        self._set_game_artwork_async(game, (300, 140), icon_label, "hero")
 
         title_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
-        title_frame.pack(side="left", fill="both", expand=True)
+        title_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 18), pady=(22, 8))
 
         title_label = ctk.CTkLabel(
             title_frame,
             text=game.get("name", "Unknown"),
-            font=ctk.CTkFont(size=24, weight="bold")
+            font=ctk.CTkFont(size=26, weight="bold"),
+            text_color=UI["text"],
+            wraplength=520,
+            anchor="w",
+            justify="left"
         )
-        title_label.pack(anchor="w")
+        title_label.pack(anchor="w", fill="x")
 
         source_label = ctk.CTkLabel(
             title_frame,
             text=self.t("source", source=game.get("source", self.t("manual_source"))),
             font=ctk.CTkFont(size=12),
-            text_color="#888888"
+            text_color=UI["muted"]
         )
         source_label.pack(anchor="w", pady=(5, 0))
 
         action_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
-        action_frame.pack(side="right", padx=(20, 0))
+        action_frame.grid(row=1, column=1, sticky="sew", padx=(0, 18), pady=(0, 18))
 
         play_btn = ctk.CTkButton(
             action_frame,
@@ -1908,35 +2148,39 @@ class GameLauncherApp(ctk.CTk):
             command=lambda: self.launch_game(game),
             height=40,
             width=150,
-            fg_color="#2d8a2d",
-            hover_color="#246624",
-            font=ctk.CTkFont(size=14, weight="bold")
+            corner_radius=10,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            **self._button_style("success")
         )
-        play_btn.pack(fill="x", pady=(0, 6))
+        play_btn.pack(side="left", padx=(0, 8))
 
         change_art_btn = ctk.CTkButton(
             action_frame,
             text=self.t("change_artwork"),
             command=lambda g=game: self.change_game_artwork(g),
             height=32,
-            width=150
+            width=150,
+            corner_radius=10,
+            **self._button_style("secondary")
         )
-        change_art_btn.pack(fill="x", pady=(0, 6))
+        change_art_btn.pack(side="left", padx=(0, 8))
 
         refresh_art_btn = ctk.CTkButton(
             action_frame,
             text=self.t("refresh_artwork"),
             command=lambda g=game: self.refresh_game_artwork(g),
             height=32,
-            width=150
+            width=150,
+            corner_radius=10,
+            **self._button_style("secondary")
         )
-        refresh_art_btn.pack(fill="x")
+        refresh_art_btn.pack(side="left")
 
         loading_label = ctk.CTkLabel(
             detail_scroll,
             text=self.t("loading_game_info"),
             font=ctk.CTkFont(size=13),
-            text_color="#888888"
+            text_color=UI["muted"]
         )
         loading_label.pack(pady=20)
 
@@ -1948,11 +2192,7 @@ class GameLauncherApp(ctk.CTk):
 
     def _hide_game_detail(self):
         self._current_game_detail = None
-
-        for widget in self.left_frame.winfo_children():
-            widget.destroy()
-
-        self.create_games_tab_content()
+        self.show_view("library")
 
     def _fetch_game_info(self, game_name: str) -> dict:
         if not requests:
@@ -2036,7 +2276,7 @@ class GameLauncherApp(ctk.CTk):
                 parent,
                 text=self.t("game_info_error", error=info["error"]),
                 font=ctk.CTkFont(size=13),
-                text_color="#ff8888"
+                text_color=UI["danger"]
             )
             error_label.pack(pady=20)
             return
@@ -2051,7 +2291,7 @@ class GameLauncherApp(ctk.CTk):
 
         for title, value in sections:
             if value and value != "Unbekannt":
-                section_frame = ctk.CTkFrame(parent, corner_radius=8)
+                section_frame = self._create_panel(parent, fg_color=UI["surface"], corner_radius=12)
                 section_frame.pack(fill="x", pady=5)
 
                 title_label = ctk.CTkLabel(
@@ -2070,7 +2310,7 @@ class GameLauncherApp(ctk.CTk):
                 )
                 value_label.pack(anchor="w", padx=15, pady=(0, 10))
 
-        stats_frame = ctk.CTkFrame(parent, corner_radius=8)
+        stats_frame = self._create_panel(parent, fg_color=UI["surface"], corner_radius=12)
         stats_frame.pack(fill="x", pady=10)
 
         stats_inner = ctk.CTkFrame(stats_frame, fg_color="transparent")
@@ -2091,7 +2331,7 @@ class GameLauncherApp(ctk.CTk):
                 rating_frame,
                 text=f"{info['rating']:.1f} / 5.0",
                 font=ctk.CTkFont(size=16, weight="bold"),
-                text_color="#ffaa00"
+                text_color=UI["warning"]
             )
             rating_value.pack()
 
@@ -2110,7 +2350,7 @@ class GameLauncherApp(ctk.CTk):
                 playtime_frame,
                 text=self.t("hours", hours=info["playtime"]),
                 font=ctk.CTkFont(size=16, weight="bold"),
-                text_color="#44aaff"
+                text_color=UI["accent"]
             )
             playtime_value.pack()
 
@@ -2126,7 +2366,7 @@ class GameLauncherApp(ctk.CTk):
             metacritic_label.pack()
 
             score = info['metacritic']
-            color = "#66cc33" if score >= 75 else "#ffcc33" if score >= 50 else "#ff6666"
+            color = UI["success"] if score >= 75 else UI["warning"] if score >= 50 else UI["danger"]
 
             metacritic_value = ctk.CTkLabel(
                 metacritic_frame,
@@ -2137,7 +2377,7 @@ class GameLauncherApp(ctk.CTk):
             metacritic_value.pack()
 
         if info.get("description"):
-            desc_frame = ctk.CTkFrame(parent, corner_radius=8)
+            desc_frame = self._create_panel(parent, fg_color=UI["surface"], corner_radius=12)
             desc_frame.pack(fill="both", expand=True, pady=10)
 
             desc_title = ctk.CTkLabel(
@@ -2357,9 +2597,9 @@ class GameLauncherApp(ctk.CTk):
         columns = getattr(self, "_games_columns", 3)
         row, col = divmod(index, columns)
 
-        card = ctk.CTkFrame(parent, corner_radius=12, border_width=2, border_color="#2a2a2a", cursor="hand2")
+        card = self._create_panel(parent, fg_color=UI["surface_alt"], border_width=1, border_color=UI["border"], corner_radius=14, cursor="hand2")
         card.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
-        card.configure(width=260, height=240)
+        card.configure(width=270, height=252)
         card.grid_propagate(False)
         card.pack_propagate(False)
 
@@ -2370,11 +2610,11 @@ class GameLauncherApp(ctk.CTk):
             if not self._is_scrolling:
                 if self._hovered_card is not None and self._hovered_card != card:
                     try:
-                        self._hovered_card.configure(border_color="#2a2a2a", border_width=2)
+                        self._hovered_card.configure(border_color=UI["border"], border_width=1)
                     except Exception:
                         pass
                 self._hovered_card = card
-                card.configure(border_color="#4a8cff", border_width=3)
+                card.configure(border_color=UI["border_hover"], border_width=2)
 
         def on_leave(e=None):
             if self._is_scrolling:
@@ -2388,7 +2628,7 @@ class GameLauncherApp(ctk.CTk):
             except Exception:
                 pass
 
-            card.configure(border_color="#2a2a2a", border_width=2)
+            card.configure(border_color=UI["border"], border_width=1)
             if self._hovered_card == card:
                 self._hovered_card = None
 
@@ -2403,28 +2643,29 @@ class GameLauncherApp(ctk.CTk):
             width=30,
             height=30,
             fg_color="transparent",
-            hover_color="#3a3a3a",
+            hover_color=UI["surface_hover"],
             command=lambda g=game: self._toggle_favorite(g),
             font=ctk.CTkFont(size=16)
         )
         fav_btn.place(relx=0.95, rely=0.05, anchor="ne")
         fav_btn.bind("<Button-1>", lambda e: "break", add="+")
 
-        icon_label = ctk.CTkLabel(card, text="", cursor="hand2", width=180, height=84)
-        icon_label.pack(side="top", pady=(12, 6))
+        icon_label = ctk.CTkLabel(card, text="", cursor="hand2", width=214, height=100)
+        icon_label.pack(side="top", pady=(14, 8))
         icon_label.pack_propagate(False)
         icon_label.bind("<Button-1>", show_detail)
 
         fallback_img = self.get_game_icon_image(game.get("path", ""), (64, 64))
         icon_label.configure(image=fallback_img)
         self._ui_image_refs.append(fallback_img)
-        self._set_game_artwork_async(game, (180, 84), icon_label)
+        self._set_game_artwork_async(game, (214, 100), icon_label)
 
         name_label = ctk.CTkLabel(
             card,
             text=game.get("name", "Unknown"),
             font=ctk.CTkFont(size=14, weight="bold"),
-            wraplength=150,
+            text_color=UI["text"],
+            wraplength=210,
             cursor="hand2",
             height=40
         )
@@ -2437,7 +2678,7 @@ class GameLauncherApp(ctk.CTk):
                 card,
                 text=self.t("info_available"),
                 font=ctk.CTkFont(size=12, weight="bold"),
-                text_color="#7db4ff"
+                text_color=UI["accent"]
             )
             info_label.pack(side="top", pady=(0, 6))
             info_label.bind("<Button-1>", show_detail)
@@ -2451,9 +2692,8 @@ class GameLauncherApp(ctk.CTk):
             width=80,
             height=32,
             corner_radius=8,
-            fg_color="#2d8a2d",
-            hover_color="#246624",
-            command=lambda g=game: self.launch_game(g)
+            command=lambda g=game: self.launch_game(g),
+            **self._button_style("success")
         )
         play_btn.pack(side="left", padx=4)
         play_btn.bind("<Button-1>", lambda e: "break", add="+")
@@ -2464,10 +2704,9 @@ class GameLauncherApp(ctk.CTk):
             width=35,
             height=32,
             corner_radius=8,
-            fg_color="#aa4444",
-            hover_color="#883333",
             font=ctk.CTkFont(size=14),
-            command=lambda g=game: self.remove_game(g)
+            command=lambda g=game: self.remove_game(g),
+            **self._button_style("danger")
         )
         del_btn.pack(side="left", padx=4)
         del_btn.bind("<Button-1>", lambda e: "break", add="+")
@@ -2556,6 +2795,16 @@ class GameLauncherApp(ctk.CTk):
             self.update_idletasks()
         except Exception:
             pass
+
+        if getattr(self, "_active_view", "") == "library" and hasattr(self, "games_scroll"):
+            try:
+                new_columns = self._calculate_game_columns()
+                if new_columns != getattr(self, "_games_columns", 0) or self.winfo_width() != self._last_library_width:
+                    self._games_columns = new_columns
+                    self._last_library_width = self.winfo_width()
+                    self.render_game_buttons()
+            except Exception:
+                pass
 
     def _start_idle_icon_prewarm(self):
         if getattr(self, "_prewarm_started", False):
