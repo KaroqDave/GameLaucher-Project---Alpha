@@ -35,8 +35,8 @@ except ImportError as e:
 GAMES_FILE = "games.json"
 SETTINGS_FILE = "settings.json"
 USER_DATA_DIR_NAME = "Alpha Game Launcher"
-CACHE_DATA_DIR_NAME = "AlphaGameLauncher"
-APP_VERSION = "0.0.9.1"
+CACHE_DIR_NAME = "Cache"
+APP_VERSION = "1.0.0.0"
 DEFAULT_SETTINGS = {
     "chunk_size": 12,
     "cache_size_mb": 200,
@@ -131,7 +131,7 @@ TRANSLATIONS = {
         "feature_manual": "✅ Manuelle Spiele hinzufügen",
         "feature_artwork": "✅ SteamGridDB Artwork mit manuellem Override",
         "feature_theme": "✅ Dark/Light Theme Support",
-        "feature_cache": "✅ Daten im Dokumente-Ordner, Cache im lokalen AppData",
+        "feature_cache": "✅ Daten und Cache im Dokumente-Ordner",
         "developed_by": "👨‍💻 Entwickelt von",
         "copyright": "© 2025-2026 Alpha Game Launcher. Alle Rechte vorbehalten.",
         "no_games_found": "Keine Spiele gefunden.",
@@ -224,7 +224,7 @@ TRANSLATIONS = {
         "feature_manual": "✅ Add games manually",
         "feature_artwork": "✅ SteamGridDB artwork with manual override",
         "feature_theme": "✅ Dark/Light theme support",
-        "feature_cache": "✅ Documents-based data, local AppData cache",
+        "feature_cache": "✅ Documents-based data and cache",
         "developed_by": "👨‍💻 Developed by",
         "copyright": "© 2025-2026 Alpha Game Launcher. All rights reserved.",
         "no_games_found": "No games found.",
@@ -299,7 +299,7 @@ CLEAN_TRANSLATIONS = {
         "feature_manual": "Manuelle Spiele hinzufuegen",
         "feature_artwork": "SteamGridDB Artwork mit manuellem Override",
         "feature_theme": "Dark/Light Theme Support",
-        "feature_cache": "Daten im Dokumente-Ordner, Cache im lokalen AppData",
+        "feature_cache": "Daten und Cache im Dokumente-Ordner",
         "developed_by": "Entwickelt von",
         "no_games_found": "Keine Spiele gefunden.",
         "no_games_empty": "Noch keine Spiele.\nFuege ein Spiel hinzu oder importiere deine Steam-Bibliothek.",
@@ -355,7 +355,7 @@ CLEAN_TRANSLATIONS = {
         "feature_manual": "Add games manually",
         "feature_artwork": "SteamGridDB artwork with manual override",
         "feature_theme": "Dark/Light theme support",
-        "feature_cache": "Documents-based data, local AppData cache",
+        "feature_cache": "Documents-based data and cache",
         "developed_by": "Developed by",
         "no_games_found": "No games found.",
         "no_games_empty": "No games yet.\nAdd a game or import your Steam library.",
@@ -381,8 +381,7 @@ def app_data_dir() -> str:
     return os.path.join(base, USER_DATA_DIR_NAME)
 
 def cache_data_dir() -> str:
-    base = os.getenv("LOCALAPPDATA") or os.path.expanduser("~")
-    return os.path.join(base, CACHE_DATA_DIR_NAME)
+    return os.path.join(app_data_dir(), CACHE_DIR_NAME)
 
 def resource_path(relative_path: str) -> str:
     try:
@@ -1770,7 +1769,7 @@ class GameLauncherApp(ctk.CTk):
 
         version_label = ctk.CTkLabel(
             about_container,
-            text=f"Version {APP_VERSION} - Beta",
+            text=f"Version {APP_VERSION}",
             font=ctk.CTkFont(size=14),
             text_color=UI["muted"],
             anchor="w"
@@ -1908,11 +1907,9 @@ class GameLauncherApp(ctk.CTk):
         return os.path.join(app_data_dir(), filename)
 
     def _legacy_state_candidates(self, filename: str) -> list[str]:
-        old_appdata = os.path.join(os.getenv("LOCALAPPDATA") or os.path.expanduser("~"), CACHE_DATA_DIR_NAME, filename)
         candidates = [
             os.path.abspath(filename),
             os.path.join(os.path.dirname(os.path.abspath(__file__)), filename),
-            old_appdata,
         ]
         seen = set()
         result = []

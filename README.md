@@ -1,76 +1,83 @@
-# 🎮 GameLauncher Project – Alpha v0.0.9.1  
-Ein moderner, anpassbarer **Game Launcher**, gebaut in Python mit *customtkinter*.  
-Optimiert für **Windows 11** – minimalistisch, funktional, erweiterbar.
+# Alpha Game Launcher v1.0.0.0
 
----
+A local Windows game launcher built with Python and customtkinter.
 
-## ✨ Pictures
+Alpha Game Launcher keeps your PC game library clean, searchable, and local-first. It can import installed Steam games, add standalone `.exe` games manually, fetch artwork and game details through optional API keys, and store your library data transparently on your own machine.
 
-<img width="1804" height="1247" alt="Screenshot 2025-12-15 012736" src="https://github.com/user-attachments/assets/8684944c-d5ce-4d2b-a09e-7d946ce9a640" />
+## Screenshots
 
-<img width="1804" height="1247" alt="Screenshot 2025-12-15 012517" src="https://github.com/user-attachments/assets/b3db6233-7179-4fd2-ba0a-f594081c3fff" />
+![Library view](docs/screenshots/library.png)
 
-<img width="1804" height="1247" alt="Screenshot 2025-12-15 012523" src="https://github.com/user-attachments/assets/f05306f8-d482-4bd8-9239-34f1360dc860" />
+![Settings view](docs/screenshots/settings.png)
 
-<img width="1804" height="1247" alt="Screenshot 2025-12-15 012526" src="https://github.com/user-attachments/assets/24af37de-f491-45e0-afde-be4762d089d7" />
+![About view](docs/screenshots/about.png)
 
-<img width="1804" height="1247" alt="Screenshot 2025-12-15 012544" src="https://github.com/user-attachments/assets/5f58932d-0464-4b26-996e-e292e8032999" />
+## Features
 
-### 🕹 Game Info Tab (NEW) - Example Borderland 4
-<img width="1804" height="1247" alt="Screenshot 2025-12-15 013106" src="https://github.com/user-attachments/assets/b678aa0c-70f7-474e-8fe9-0e3c9388e62a" />
+- Local Windows game library with a modern sidebar layout.
+- Manual game adding for standalone `.exe` files.
+- Steam library import from the local Steam installation.
+- Searchable library with sorting by name, favorites, or added date.
+- Favorite marking for games.
+- One-click game launching.
+- Artwork loading through SteamGridDB, with manual artwork override support.
+- Optional RAWG game information for ratings, average playtime, and descriptions.
+- Dark and light appearance modes.
+- English and German UI language selection.
+- Settings screen for theme, language, API keys, image cache, data folder, cache folder, and Steam detection.
+- Local data storage in `Documents\Alpha Game Launcher`.
+- Local image and artwork cache in `Documents\Alpha Game Launcher\Cache`.
+- Clear image cache action from the app.
+- About screen with current version, feature summary, and project credits.
 
-<img width="1804" height="1247" alt="Screenshot 2025-12-15 013056" src="https://github.com/user-attachments/assets/92d31536-97fd-4095-9a50-b68e2e1fd87a" />
+## Requirements
 
-## ✨ Features
+- Windows 10 or Windows 11
+- Python 3.10 or newer
+- Dependencies listed in `requirements.txt`
 
-### 🕹 Game Library
-- Spiele hinzufügen (.exe)
-- Spiele starten mit einem Klick
-- Rechtsklick-Menü:
-  - Starten
-  - Entfernen
-- Automatische Speicherung im Dokumente-Ordner (`Alpha Game Launcher/games.json`)
+Install dependencies:
 
-### 🖥 System Infos
-- Speicher (Freier und Belegter)
-- Aktuell Installierte Games
-- Aktuell Installierte Launcher
+```powershell
+pip install -r requirements.txt
+```
 
-### 🎨 Modernes UI
-- Dark / Light / System Theme Auswahl
-- Übersichtlich strukturiert (Header + Sidebar + System Panel)
-- Basierend auf **customtkinter** (Dark Mode ready)
+Run the launcher:
 
-### 📦 Saubere Architektur
-- Klare Trennung der UI-Bereiche
-- Einfach erweiterbarer Code
-- Kompatibel mit Windows 11
+```powershell
+python game_launcher.py
+```
 
----
+## Optional API Keys
 
-## 🛠 Roadmap (1.0 Release Ziele)
-- EPIC / EA / Ubisoft / Battle.net Detection
+Alpha Game Launcher works without API keys, but artwork and richer game information improve when keys are configured.
 
-## Nach 1.0 Release
-- Auto-Updater
-- Splash Screen beim Start
-- Crash Log System
-- Blur/Glass Effect (Windows 11 Style)
+- SteamGridDB API key: used for online game artwork.
+- RAWG API key: used for game information such as descriptions, ratings, and average playtime.
 
-### In Arbeit
-- Andere Bug Fixes
-- QoL Features
+You can enter both keys in the Settings screen. The app can also read `STEAMGRIDDB_API_KEY` and `RAWG_API_KEY` from the environment.
 
-### Fertig
-- Overall QoL Verbesserungen im UI und Code
-- Spielinfo-Anzeige (api.rawg.io)
-- About-Dialog mit Icon + Version
-- Animierte Buttons (Hover-Effekt)
-- Auto-Detect von installierten Launchern
-- Tabs: Games / System / Settings / About
-- Color Themes für den Launcher
-- Settings speichern
-- Automatische Games Erkennung
-- Game Cards statt Textliste
-- Game Grid statt Liste
-- Pre-release build fix
+## Data Locations
+
+- Library and settings: `Documents\Alpha Game Launcher`
+- Image and artwork cache: `Documents\Alpha Game Launcher\Cache`
+
+## Roadmap
+
+Version 1.0.0.0 completes the planned first release scope:
+
+- Reworked Library, Settings, and About views.
+- Steam library import.
+- Manual game adding and launching.
+- Search, favorites, and library sorting.
+- SteamGridDB artwork support with manual artwork changes.
+- RAWG game information support.
+- Dark and light theme support.
+- English and German UI language support.
+- Local settings, library data, and image cache handling.
+
+There is no public future roadmap yet.
+
+## Author
+
+Developed by [KaroqDave](https://github.com/KaroqDave).
